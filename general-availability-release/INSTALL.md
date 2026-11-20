@@ -9,6 +9,9 @@
 
 `install.ps1` 按顺序做六件事，任何一步失败都会停下来并保留现场：
 
+> `payload/computer-use-win/` 由 `build-release.ps1` 从上层源码树生成，不随 Git 仓库分发。
+> 从源码克隆安装时先运行 `.\build-release.ps1 -NoZip`；Releases 的 zip 里已包含该目录。
+
 | 步骤 | 动作 | 失败表现 |
 |---|---|---|
 | 1 | 校验 `payload/` 完整（`src/server.mjs`、`engine/*.ps1`、`engine/Interop.cs`、模板、示例策略） | `payload is incomplete …` |

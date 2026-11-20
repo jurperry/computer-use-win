@@ -83,6 +83,10 @@ cd computer-use-win-0.2.0
 #    .\install.ps1 -PolicyPreset open
 ```
 
+> 从 Git 仓库克隆的源码树里，`payload/computer-use-win/` 是生成物、没有入库。先运行
+> `.\build-release.ps1 -NoZip` 生成它，再执行 `.\install.ps1`；直接下载 Releases 里的
+> `computer-use-win-0.2.0.zip` 则已带完整 payload，无需构建。
+
 安装器会打印它做了什么，并给出下一步。**第 2 步在 DSH 里操作一次**（每个 profile 一次）：
 
 ```text

@@ -2,6 +2,14 @@
   "name": "computer-use-win",
   "version": "0.2.0",
   "description": "Reusable Computer Use MCP server for Windows: screenshots, mouse/keyboard input, window binding, batching and a policy-enforced permission model. Zero runtime dependencies.",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/jurperry/computer-use-win.git"
+  },
+  "homepage": "https://github.com/jurperry/computer-use-win#readme",
+  "bugs": {
+    "url": "https://github.com/jurperry/computer-use-win/issues"
+  },
   "type": "module",
   "bin": {
     "computer-use-win": "./src/server.mjs"
