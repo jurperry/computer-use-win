@@ -1,0 +1,56 @@
+{
+  "ok": true,
+  "results": [
+    {
+      "name": "server runs at medium integrity",
+      "ok": true,
+      "detail": "medium"
+    },
+    {
+      "name": "elevated window is recognized as restricted",
+      "ok": true,
+      "detail": "integrity=high"
+    },
+    {
+      "name": "open_application binds (and elevates) the target",
+      "ok": true,
+      "detail": "hwnd=17370132 activated=true"
+    },
+    {
+      "name": "elevated helper is connected",
+      "ok": true,
+      "detail": "pid=28624 integrity=high"
+    },
+    {
+      "name": "screenshot of a high-integrity window succeeds",
+      "ok": true,
+      "detail": "902x656 method=printwindow"
+    },
+    {
+      "name": "click reaches the elevated window",
+      "ok": true,
+      "detail": "clicks=1"
+    },
+    {
+      "name": "typing reaches the elevated window",
+      "ok": true,
+      "detail": "app received \"text=提权通道 OK 😀\""
+    },
+    {
+      "name": "batch through the elevated helper",
+      "ok": true,
+      "detail": "clicks=3"
+    },
+    {
+      "name": "switch back to full display",
+      "ok": true,
+      "detail": "\\\\.\\DISPLAY1"
+    },
+    {
+      "name": "full-display screenshot still local",
+      "ok": true,
+      "detail": "screen"
+    }
+  ],
+  "stderr": "13:14:35.988 [cu-win info] engine: engine ready pid=33988 monitors=1 awareness=2\n13:14:35.990 [cu-win info] server: computer-use-win 0.1.0 ready: 1 monitor(s), awareness 2, integrity medium, policy \"standard\" from E:\\ClaudeCode\\computer_use_win\\test\\artifacts\\elevation-1794662071365\\policy.json\n13:14:35.990 [cu-win info] server: elevation enabled: controlling elevated windows will prompt UAC (launcher E:\\ClaudeCode\\computer_use_win\\engine\\launch-elevated.ps1)\n13:14:35.991 [cu-win info] server: listening on stdio (28 tools)\n13:14:35.992 [cu-win info] mcp: initialize from e2e-elevation 1 (requested 2025-06-18 -> 2025-06-18)\n13:14:35.992 [cu-win info] mcp: client initialized\n13:14:36.257 [cu-win info] cu: open_application: target \"CU Test Target\" [CuTestTarget.exe] is elevated; starting the elevated helper (UAC prompt)\n13:14:36.262 [cu-win info] elevated: requesting elevation (a UAC prompt should appear)\n13:14:39.024 [cu-win info] elevated: elevated helper ready pid=28624 integrity=high\n13:14:41.393 [cu-win info] elevated: stopped elevated helper pid=28624\n"
+}

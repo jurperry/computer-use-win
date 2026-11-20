@@ -1,0 +1,7 @@
+{
+  "meta": {
+    "title": "Windows computer use",
+    "description": "Takes screenshots of local Windows apps and drives real keyboard and mouse input, with per-application permission tiers and an Escape abort.",
+    "detail": "docs/DETAIL.md"
+  }
+}

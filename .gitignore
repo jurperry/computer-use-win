@@ -1,0 +1,26 @@
+# Runtime scratch written by the test suite; nothing here is source.
+test/artifacts/
+
+# Compiled locally by tools/test-target/build.ps1 and tools/msg-target/build.ps1.
+tools/test-target/CuTestTarget.exe
+tools/msg-target/MsgTarget.exe
+*.exe
+
+# Release build outputs. Rebuild with general-availability-release/build-release.ps1.
+general-availability-release/dist/
+# Generated copy of the server tree; payload/dsh-bundle is hand-maintained and stays.
+general-availability-release/payload/computer-use-win/
+/general-availability-release.zip
+
+# Node
+node_modules/
+*.log
+# Evidence logs are docs, not noise.
+!docs/evidence/*.log
+
+# Editor and OS noise
+.vscode/
+.idea/
+desktop.ini
+Thumbs.db
+.DS_Store

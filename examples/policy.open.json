@@ -1,0 +1,18 @@
+{
+  "$comment": "Fully trusted local workstation. Every window is controllable at full tier. UAC/LogonUI and session-manager processes remain refused by the built-in deny list. System key combos stay off unless you flip the flag deliberately.",
+  "preset": "open",
+  "unlisted": "full",
+  "apps": [],
+  "deny": [],
+  "flags": {
+    "abortHotkey": true,
+    "clipboardGuard": true,
+    "clipboardRead": true,
+    "clipboardWrite": true,
+    "systemKeyCombos": false,
+    "launchApps": true,
+    "backgroundInput": true,
+    "elevation": true,
+    "windowHighlight": true
+  }
+}

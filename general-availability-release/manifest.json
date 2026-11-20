@@ -1,0 +1,55 @@
+{
+  "schema": 1,
+  "product": "computer-use-win",
+  "version": "0.2.0",
+  "kind": "mcp-server-source + dsh-plugin-bundle",
+  "license": "MIT",
+  "requires": {
+    "os": "Windows 10 1809+ / Windows 11",
+    "session": "logged-in interactive desktop session",
+    "powershell": "Windows PowerShell 5.1 (system)",
+    "node": ">=20 (optional: the installer reuses the runtime downloaded by DSH)"
+  },
+  "components": [
+    {
+      "name": "computer-use-win",
+      "role": "mcp-server",
+      "path": "payload/computer-use-win",
+      "entry": "src/server.mjs",
+      "tools": 27,
+      "toolPrefix": "mcp__computeruse__"
+    },
+    {
+      "name": "computer-use-win-mcp",
+      "role": "dsh-bundle",
+      "path": "payload/dsh-bundle",
+      "entry": "cordis.patch.yml.template",
+      "rendered": "cordis.patch.yml",
+      "inserts": "@deepseek-ai/dsh-mcp-client",
+      "serverName": "computeruse"
+    }
+  ],
+  "install": {
+    "script": "install.ps1",
+    "defaultInstallDir": "%LOCALAPPDATA%\\computer-use-win",
+    "defaultPolicyPath": "%USERPROFILE%\\.computer-use-win\\policy.json",
+    "layout": {
+      "server": "<InstallDir>\\server",
+      "bundle": "<InstallDir>\\dsh-bundle",
+      "state": "<InstallDir>\\install-state.json"
+    },
+    "policyPresets": ["standard", "open", "safe"],
+    "defaultPolicyPreset": "standard",
+    "writesDshProfile": false
+  },
+  "verify": {
+    "script": "verify.ps1",
+    "handshake": "tools/handshake.mjs",
+    "injectsInput": false
+  },
+  "release": {
+    "builder": "build-release.ps1",
+    "zip": "dist/computer-use-win-0.2.0.zip",
+    "checksums": "dist/SHA256SUMS.txt"
+  }
+}

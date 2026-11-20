@@ -1,0 +1,20 @@
+# Codex CLI — add to ~/.codex/config.toml
+#
+# [mcp_servers.computer-use-win]
+# command = "node"
+# args = ["E:\\ClaudeCode\\computer_use_win\\src\\server.mjs"]
+# env = { CU_POLICY_PRESET = "standard", CU_LOG_LEVEL = "info" }
+# startup_timeout_sec = 20
+#
+# Why a longer startup timeout: the first launch compiles the C# interop layer with Add-Type,
+# which costs roughly 0.6s on a typical machine — well inside the default, but do not set this
+# below 5s on slow machines.
+
+[mcp_servers.computer-use-win]
+command = "node"
+args = ["E:\\ClaudeCode\\computer_use_win\\src\\server.mjs"]
+startup_timeout_sec = 20
+
+[mcp_servers.computer-use-win.env]
+CU_POLICY_PRESET = "standard"
+CU_LOG_LEVEL = "info"

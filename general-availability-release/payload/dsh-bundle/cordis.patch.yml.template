@@ -1,0 +1,23 @@
+# computer-use-win — DeepSeek Harness bundle patch.
+#
+# Rendered from cordis.patch.yml.template by install.ps1: the command, entry point, policy path and
+# working directory below are absolute paths for this machine. Regenerate with `install.ps1 -Force`
+# instead of editing this file by hand.
+#
+# The bundle is configuration-only. It inserts the shipped MCP client and points it at the local
+# computer-use-win server over stdio; no DSH-side code is installed.
+- insert:
+    - id: computer-use-win-mcp
+      name: '@deepseek-ai/dsh-mcp-client'
+      config:
+        serverName: computeruse
+        transport: stdio
+        command: __NODE__
+        args:
+          - __SERVER__
+          - '--policy'
+          - __POLICY__
+        cwd: __CWD__
+        failOnStartupError: true
+        startupTimeoutMs: 30000
+        toolCallTimeoutMs: 180000

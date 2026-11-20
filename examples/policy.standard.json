@@ -1,0 +1,54 @@
+{
+  "$comment": "Recommended default. The agent may look at anything, but clicking/typing requires an explicit app entry. Clipboard allowed, system key combos and background message input disabled.",
+  "preset": "standard",
+  "unlisted": "read",
+  "apps": [
+    {
+      "app": "notepad.exe",
+      "tier": "full"
+    },
+    {
+      "app": "mspaint.exe",
+      "tier": "full"
+    },
+    {
+      "app": "chrome.exe",
+      "tier": "read"
+    },
+    {
+      "app": "msedge.exe",
+      "tier": "read"
+    },
+    {
+      "app": "Code.exe",
+      "tier": "click"
+    },
+    {
+      "app": "WindowsTerminal.exe",
+      "tier": "click"
+    }
+  ],
+  "deny": [
+    "cmd.exe",
+    "powershell.exe",
+    "regedit.exe",
+    "mmc.exe"
+  ],
+  "flags": {
+    "abortHotkey": true,
+    "clipboardGuard": true,
+    "clipboardRead": true,
+    "clipboardWrite": true,
+    "systemKeyCombos": false,
+    "launchApps": true,
+    "backgroundInput": false,
+    "elevation": true,
+    "windowHighlight": true
+  },
+  "limits": {
+    "maxBatchActions": 100,
+    "maxBatchScreenshots": 4,
+    "maxBatchImageBytes": 20971520,
+    "maxTypeChars": 100000
+  }
+}

@@ -1,0 +1,123 @@
+{
+  "ok": true,
+  "failures": 0,
+  "runDir": "E:\\ClaudeCode\\computer_use_win\\test\\artifacts\\e2e-1794658531469",
+  "results": [
+    {
+      "name": "initialize",
+      "ok": true,
+      "detail": "2025-06-18"
+    },
+    {
+      "name": "open_application binds target",
+      "ok": true,
+      "detail": "hwnd=22021580 tier=full"
+    },
+    {
+      "name": "window screenshot",
+      "ok": true,
+      "detail": "902x656 src 902x656 origin 160,160"
+    },
+    {
+      "name": "get_window returns identity and policy",
+      "ok": true,
+      "detail": "CuTestTarget tier=full dpi=per-monitor"
+    },
+    {
+      "name": "activate_window",
+      "ok": true,
+      "detail": "Activated \"CU Test Target\" [CuTestTarget.exe]. Coordinates still refer to the last screenshot; take "
+    },
+    {
+      "name": "zoom in window mode crops to the region",
+      "ok": true,
+      "detail": "crop=200x150 (expected ≈200 wide of 902)"
+    },
+    {
+      "name": "left_click reaches the app",
+      "ok": true,
+      "detail": "logged clicks=1 at screenshot (155,193)"
+    },
+    {
+      "name": "type sends unicode",
+      "ok": true,
+      "detail": "app received \"text=中文 😀 abc ABC 123 !@#\""
+    },
+    {
+      "name": "key chord ctrl+a then BackSpace",
+      "ok": true,
+      "detail": "after=\"\""
+    },
+    {
+      "name": "right_click reaches the app",
+      "ok": true,
+      "detail": "right button downs=1"
+    },
+    {
+      "name": "double_click produces two clicks",
+      "ok": true,
+      "detail": "clicks 1->3"
+    },
+    {
+      "name": "left_mouse_down + move + left_mouse_up",
+      "ok": true,
+      "detail": "mousedowns=1 mouseups=2"
+    },
+    {
+      "name": "hold_key",
+      "ok": true,
+      "detail": "Key hold \"space\" for 0.15s dispatched. The application effect is not verified; take a screenshot to confirm."
+    },
+    {
+      "name": "scroll reaches the app",
+      "ok": true,
+      "detail": "wheel events=1 delta=delta=-240"
+    },
+    {
+      "name": "drag dispatches press+move+release",
+      "ok": true,
+      "detail": "down=3 up=3 lastUp=x=320 y=200 from=40,120"
+    },
+    {
+      "name": "computer_batch runs every action",
+      "ok": true,
+      "detail": "clicks 4->6, completed=2"
+    },
+    {
+      "name": "wait",
+      "ok": true,
+      "detail": "Waited 0.15s."
+    },
+    {
+      "name": "screenshot after actions",
+      "ok": true,
+      "detail": "printwindow"
+    },
+    {
+      "name": "out-of-image coordinate refused",
+      "ok": true,
+      "detail": "Error (bad_args): Coordinate (99999, 99999) is outside the last screenshot (902x656). Take a new screenshot and use coordinates inside the image."
+    },
+    {
+      "name": "script launch is refused before execution",
+      "ok": true,
+      "detail": "Error (app_not_allowed): \"E:\\ClaudeCode\\computer_use_win\\test\\artifacts\\e2e-1794658531469\\evil.bat\" is not a .exe (extension \".bat\"). Launch"
+    },
+    {
+      "name": "unlisted app cannot be bound for input",
+      "ok": true,
+      "detail": "tier=read"
+    },
+    {
+      "name": "switch_display returns to full screen",
+      "ok": true,
+      "detail": "monitor=0"
+    },
+    {
+      "name": "full-display screenshot",
+      "ok": true,
+      "detail": "1389x868"
+    }
+  ],
+  "stderr": "12:15:32.393 [cu-win info] engine: engine ready pid=29764 monitors=1 awareness=2\n12:15:32.395 [cu-win info] server: computer-use-win 0.1.0 ready: 1 monitor(s), awareness 2, policy \"standard\" from E:\\ClaudeCode\\computer_use_win\\test\\artifacts\\e2e-1794658531469\\policy.json\n12:15:32.396 [cu-win info] server: listening on stdio (28 tools)\n12:15:32.396 [cu-win info] mcp: initialize from e2e 1 (requested 2025-06-18 -> 2025-06-18)\n12:15:32.397 [cu-win info] mcp: client initialized\n12:15:38.597 [cu-win warn] mcp: tool left_click refused: bad_args Coordinate (99999, 99999) is outside the last screenshot (902x656). Take a new screenshot and use coordinates inside the image.\n12:15:38.745 [cu-win warn] mcp: tool open_application refused: app_not_allowed \"E:\\ClaudeCode\\computer_use_win\\test\\artifacts\\e2e-1794658531469\\evil.bat\" is not a .exe (extension \".bat\"). Launching scripts, shortcuts or documents is equivalent to arbitrary code execution and is not supported. Start it yourself, or pass the executable.\n"
+}

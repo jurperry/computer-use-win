@@ -1,0 +1,44 @@
+{
+  "name": "computer-use-win",
+  "version": "0.2.0",
+  "description": "Reusable Computer Use MCP server for Windows: screenshots, mouse/keyboard input, window binding, batching and a policy-enforced permission model. Zero runtime dependencies.",
+  "type": "module",
+  "bin": {
+    "computer-use-win": "./src/server.mjs"
+  },
+  "exports": {
+    ".": "./src/server.mjs"
+  },
+  "files": [
+    "src",
+    "engine",
+    "docs",
+    "LICENSE",
+    "README.md"
+  ],
+  "scripts": {
+    "start": "node ./src/server.mjs",
+    "check": "node ./src/server.mjs --check",
+    "test": "node --test \"test/*.test.mjs\"",
+    "smoke": "node ./tools/mcp-smoke.mjs",
+    "e2e": "powershell -NoProfile -ExecutionPolicy Bypass -File ./tools/test-target/build.ps1 && node ./tools/e2e-input.mjs",
+    "e2e:channel": "powershell -NoProfile -ExecutionPolicy Bypass -File ./tools/msg-target/build.ps1 && node ./tools/e2e-channel.mjs",
+    "e2e:elevation": "node ./tools/e2e-elevation.mjs",
+    "e2e:guards": "node ./tools/e2e-guards.mjs",
+    "probe": "node ./tools/probe.mjs"
+  },
+  "engines": {
+    "node": ">=20"
+  },
+  "os": [
+    "win32"
+  ],
+  "license": "MIT",
+  "keywords": [
+    "mcp",
+    "computer-use",
+    "windows",
+    "automation",
+    "screenshot"
+  ]
+}

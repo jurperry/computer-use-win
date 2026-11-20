@@ -1,0 +1,19 @@
+{
+  "$comment": "Safe preset: nothing is controllable, bindable or capturable until at least one app is listed. With apps empty, screenshot/zoom return allowlist_empty. Once one app is listed, observation opens up but only listed apps can be bound/input.",
+  "preset": "safe",
+  "unlisted": "none",
+  "apps": [],
+  "deny": [],
+  "flags": {
+    "abortHotkey": true,
+    "clipboardGuard": true,
+    "clipboardRead": false,
+    "clipboardWrite": false,
+    "systemKeyCombos": false,
+    "launchApps": false,
+    "backgroundInput": false,
+    "captureDisplay": true,
+    "elevation": false,
+    "windowHighlight": true
+  }
+}

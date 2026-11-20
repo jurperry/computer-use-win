@@ -1,0 +1,7 @@
+{
+  "meta": {
+    "title": "Windows 电脑操作",
+    "description": "对本地 Windows 应用截图并进行真实键鼠操作，按应用分级授权，支持 ESC 中止与绑定窗口描边。",
+    "detail": "docs/DETAIL.md"
+  }
+}

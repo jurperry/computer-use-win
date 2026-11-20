@@ -1,0 +1,14 @@
+{
+  "$comment": "Claude Code project-scoped MCP config (.mcp.json in the project root) or merge into ~/.claude.json. Verify with `claude mcp list`.",
+  "mcpServers": {
+    "computer-use-win": {
+      "type": "stdio",
+      "command": "node",
+      "args": ["E:\\ClaudeCode\\computer_use_win\\src\\server.mjs"],
+      "env": {
+        "CU_POLICY_PRESET": "standard",
+        "CU_LOG_LEVEL": "info"
+      }
+    }
+  }
+}

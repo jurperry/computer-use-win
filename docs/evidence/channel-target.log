@@ -1,0 +1,4 @@
+ready hwnd=30411460 pad=14091746 button=12453426
+pad-down x=120 y=40 w=1
+pad-up x=120 y=40 w=0
+click 1 at 14:13:51.604

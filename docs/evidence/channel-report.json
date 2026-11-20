@@ -1,0 +1,52 @@
+{
+  "ok": true,
+  "failed": 0,
+  "runDir": "E:\\ClaudeCode\\computer_use_win\\test\\artifacts\\channel-1795184029192",
+  "results": [
+    {
+      "name": "classic window classified as standard/message",
+      "ok": true,
+      "detail": "{\"framework\":\"standard\",\"matchedClass\":null,\"frameworkMouse\":\"message\",\"frameworkKeyboard\":\"message\",\"note\":\"Classic USER32 window: posted mouse and keyboard messages reach the app layer.\",\"keyboardChannel\":\"real\",\"mouseChannel\":\"message\",\"messageChannel\":{\"flag\":\"backgroundInput\",\"enabled\":true,\"eligible\":true,\"stuck\":false}}"
+    },
+    {
+      "name": "posted click reached the child with client coordinates",
+      "ok": true,
+      "detail": "pad-down x=120 y=40 w=1 | pad-up x=120 y=40 w=0"
+    },
+    {
+      "name": "message click did not move the physical cursor",
+      "ok": true,
+      "detail": "{\"x\":144,\"y\":144} -> {\"x\":144,\"y\":144}"
+    },
+    {
+      "name": "reply names the transport",
+      "ok": true,
+      "detail": "left click dispatched at screenshot (171, 125) -> screen (311, 265) on \"CU MSG TARGET\" [MsgTarget.exe] via posted window messages to hwnd 14091746 (no cursor mo"
+    },
+    {
+      "name": "forced real click reached the native button",
+      "ok": true,
+      "detail": "click 1 at 14:13:51.604"
+    },
+    {
+      "name": "forced real click moved the physical cursor to the point",
+      "ok": true,
+      "detail": "{\"x\":311,\"y\":370} target 311,370"
+    },
+    {
+      "name": "unaware target is virtualized by the monitor DPI",
+      "ok": true,
+      "detail": "reported 520px logical vs 780px physical (x1.50)"
+    },
+    {
+      "name": "posted click on a DPI-unaware target uses logical client coordinates",
+      "ok": true,
+      "detail": "ok=true target=13830768 pad-up x=120 y=40 w=0"
+    },
+    {
+      "name": "posted click on a DPI-unaware target leaves the cursor alone",
+      "ok": true,
+      "detail": "{\"x\":311,\"y\":370} -> {\"x\":311,\"y\":370}"
+    }
+  ]
+}

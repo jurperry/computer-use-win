@@ -1,0 +1,16 @@
+{
+  "$comment": "Generic stdio MCP server entry. Absolute paths because MCP clients do not always inherit your shell's cwd.",
+  "mcpServers": {
+    "computer-use-win": {
+      "type": "stdio",
+      "command": "node",
+      "args": [
+        "E:\\ClaudeCode\\computer_use_win\\src\\server.mjs"
+      ],
+      "env": {
+        "CU_POLICY_FILE": "C:\\Users\\<you>\\.computer-use-win\\policy.json",
+        "CU_LOG_LEVEL": "info"
+      }
+    }
+  }
+}
