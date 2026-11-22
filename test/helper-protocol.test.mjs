@@ -35,7 +35,9 @@ $p = Start-Process -FilePath 'powershell.exe' -ArgumentList $args -PassThru
 `
 
 function makeSimulation() {
-  const source = readFileSync(path.join(ENGINE_DIR, 'elevated.ps1'), 'utf8')
+  // Normalize line endings: a Windows checkout with core.autocrlf=true rewrites the script to
+  // CRLF, and the block below is matched as text.
+  const source = readFileSync(path.join(ENGINE_DIR, 'elevated.ps1'), 'utf8').replace(/\r\n/g, '\n')
   const needle = 'if ($self -lt 0x3000) {\n  Stop-Helper 21 "not elevated (integrity $self); refusing to serve"\n}'
   if (!source.includes(needle)) {
     throw new Error('could not find the integrity refusal block to stub out')
