@@ -39,6 +39,7 @@ function Write-Log([string]$message) {
 function Stop-Helper([int]$code, [string]$why) {
   Write-Log "exit $code : $why"
   try { [void][CuWin.Engine]::ForceIdle() } catch { }
+  try { [CuWin.WindowBorder]::Hide() } catch { }
   exit $code
 }
 
@@ -200,32 +201,38 @@ Write-Log 'handshake accepted'
 # --- request loop ---------------------------------------------------------------
 
 $served = 0
-while ($null -ne ($line = $reader.ReadLine())) {
-  if ([string]::IsNullOrWhiteSpace($line)) { continue }
-  $id = $null
-  try {
-    $req = $line | ConvertFrom-Json
-    $id = [string]$req.id
-    $op = [string]$req.op
-    if ($op -eq 'app.launch' -or $op -eq 'app.resolve') {
-      Send-PipeErr $id 'unsupported_on_elevated' "The elevated helper never creates processes; $op must go through the local engine."
-      continue
+try {
+  while ($null -ne ($line = $reader.ReadLine())) {
+    if ([string]::IsNullOrWhiteSpace($line)) { continue }
+    $id = $null
+    try {
+      $req = $line | ConvertFrom-Json
+      $id = [string]$req.id
+      $op = [string]$req.op
+      if ($op -eq 'app.launch' -or $op -eq 'app.resolve') {
+        Send-PipeErr $id 'unsupported_on_elevated' "The elevated helper never creates processes; $op must go through the local engine."
+        continue
+      }
+      $result = Invoke-CuOp $op $req.args
+      $served += 1
+      if ($result.ok) {
+        Send-PipeOk $id $result.result
+        if ($result.result -is [System.Collections.IDictionary] -and $result.result.Contains('exit')) { break }
+      } else {
+        Send-PipeErr $id $result.code $result.message
+      }
+    } catch {
+      Write-Log "op failed: $($_.Exception.Message)"
+      Send-PipeErr $id 'engine_exception' $_.Exception.Message
     }
-    $result = Invoke-CuOp $op $req.args
-    $served += 1
-    if ($result.ok) {
-      Send-PipeOk $id $result.result
-      if ($result.result -is [System.Collections.IDictionary] -and $result.result.Contains('exit')) { break }
-    } else {
-      Send-PipeErr $id $result.code $result.message
-    }
-  } catch {
-    Write-Log "op failed: $($_.Exception.Message)"
-    Send-PipeErr $id 'engine_exception' $_.Exception.Message
   }
+}
+finally {
+  # A broken pipe throws instead of returning null, so the cleanup belongs in a finally block.
+  try { [void][CuWin.Engine]::ForceIdle() } catch { }
+  try { [CuWin.WindowBorder]::Hide() } catch { }
 }
 
 Write-Log "client disconnected after $served ops"
-try { [void][CuWin.Engine]::ForceIdle() } catch { }
 try { $pipe.Close() } catch { }
 exit 0

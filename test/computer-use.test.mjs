@@ -147,11 +147,11 @@ class FakeEngine {
       case 'input.key':
       case 'input.hold':
         return { ok: true, dispatchedEvents: 2, foregroundVerified: true, foregroundHwnd: this.window.hwnd, targetHwnd: args.expectedHwnd, notes: [] }
-      case 'overlay.show':
+      case 'border.show':
         return { visible: true, rect: [0, 0, 10, 10], hwnd: args.hwnd }
-      case 'overlay.hide':
+      case 'border.hide':
         return { visible: false }
-      case 'overlay.state':
+      case 'border.state':
         return { visible: true, rect: null, error: null }
       case 'esc.watch':
         return { watching: true, count: this.escCount }
@@ -220,6 +220,9 @@ class FakeElevated {
     }
     if (op === 'window.activate') return { activated: true, window: null, foregroundHwnd: 42, notes: [] }
     if (op === 'window.classes') return { hwnd: args.hwnd, top: 'WindowsForms10.Window.8.app', topHwnd: 42, children: [], truncated: false }
+    if (op === 'border.show') return { visible: true, rect: null, hwnd: args.hwnd }
+    if (op === 'border.hide') return { visible: false }
+    if (op === 'border.state') return { visible: false, rect: null, error: null }
     if (op === 'release_all') return { released: 0 }
     throw new Error(`fake elevated: unhandled op ${op}`)
   }
@@ -954,6 +957,25 @@ test('a restricted target is driven through the elevated helper', async () => {
   assert.equal(engine.calls.filter((c) => c.op === 'input.click').length, 0, 'local engine must not inject')
 })
 
+test('binding a restricted window marks its border through the elevated helper', async () => {
+  const { cu, engine, elevated } = makeCu({ policy: elevationPolicy() })
+  markRestricted(engine)
+  await cu.openApplication({ app: 'CuTestTarget.exe' })
+  assert.equal(elevated.started, 1)
+  assert.ok(
+    elevated.calls.some((c) => c.op === 'border.show' && c.args.hwnd === 42),
+    'the helper must draw the border it can reach',
+  )
+  assert.equal(engine.calls.filter((c) => c.op === 'border.show').length, 0, 'the local engine cannot mark an elevated window')
+
+  elevated.calls.length = 0
+  await cu.switchDisplay({ display: 'auto' })
+  assert.ok(
+    elevated.calls.some((c) => c.op === 'border.hide' && c.args.hwnd === 42),
+    'the clear must go back through the helper that drew it',
+  )
+})
+
 test('capturing a restricted window goes through the elevated helper', async () => {
   const { cu, engine, elevated } = makeCu({ policy: elevationPolicy() })
   await bind(cu)
@@ -1294,20 +1316,20 @@ test('mouse_move without a running helper explains the UIPI block', async () => 
 })
 // ---------------------------------------------------------------- bound-window frame
 
-test('binding a window shows the frame, and switch_display clears it', async () => {
+test('binding a window marks the border, and switch_display clears it', async () => {
   const { cu, engine } = makeCu()
   engine.calls.length = 0
   await cu.openApplication({ app: 'CuTestTarget.exe' })
-  const shows = engine.calls.filter((c) => c.op === 'overlay.show')
+  const shows = engine.calls.filter((c) => c.op === 'border.show')
   assert.equal(shows.length, 1)
   assert.equal(shows[0].args.hwnd, TARGET.hwnd)
 
   engine.calls.length = 0
   await cu.switchDisplay({ display: 'auto' })
-  assert.ok(engine.calls.some((c) => c.op === 'overlay.hide'), 'the frame must disappear in full-display mode')
+  assert.ok(engine.calls.some((c) => c.op === 'border.hide'), 'the border mark must disappear in full-display mode')
 })
 
-test('the frame follows the windowHighlight flag', async () => {
+test('the border mark follows the windowHighlight flag', async () => {
   const policy = normalizePolicy({
     preset: 'standard',
     apps: [{ app: 'CuTestTarget.exe', tier: 'full' }],
@@ -1316,5 +1338,5 @@ test('the frame follows the windowHighlight flag', async () => {
   const { cu, engine } = makeCu({ policy })
   engine.calls.length = 0
   await cu.openApplication({ app: 'CuTestTarget.exe' })
-  assert.equal(engine.calls.filter((c) => c.op === 'overlay.show').length, 0)
+  assert.equal(engine.calls.filter((c) => c.op === 'border.show').length, 0)
 })

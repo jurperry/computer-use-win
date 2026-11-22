@@ -65,6 +65,9 @@ export class ComputerUse {
   #escWatchPromise = null
   #escWatching = false
   #escWatchingElevated = false
+  /** Handle carrying the green border, and the engine that can reach it (helper for elevated targets). */
+  #highlightHwnd = 0
+  #highlightClient = null
 
   constructor({ engine, elevated, policy, coordinateMode = 'pixels', logger, limits, reloadPolicy }) {
     this.#engine = engine
@@ -941,19 +944,38 @@ export class ComputerUse {
   }
 
   /**
-   * Draws (or clears) the green frame around the bound window. It is a human-facing cue, so any
-   * failure only logs: losing the frame must never fail the tool call.
+   * Marks (or clears) the green border on the bound window. It is a human-facing cue, so any
+   * failure only logs: losing the border must never fail the tool call. The mark is drawn by the
+   * engine that can touch the window — the elevated helper for a high-integrity target — and the
+   * handle is remembered so a clear still reaches a restarted engine.
    */
-  async #syncWindowHighlight(hwnd) {
-    try {
-      if (hwnd && this.#policy.flags.windowHighlight) {
-        await this.#engine.call('overlay.show', { hwnd }, { timeoutMs: 8000 })
-      } else {
-        await this.#engine.call('overlay.hide', {}, { timeoutMs: 5000 })
+  async #syncWindowHighlight(hwnd, client = null) {
+    if (hwnd && this.#policy.flags.windowHighlight) {
+      const target = client || this.#engine
+      try {
+        await target.call('border.show', { hwnd }, { timeoutMs: 8000 })
+        this.#highlightHwnd = hwnd
+        this.#highlightClient = target
+      } catch (err) {
+        this.#logger.warn('window highlight unavailable:', err.message)
       }
-    } catch (err) {
-      this.#logger.warn('window highlight unavailable:', err.message)
+      return
     }
+    const marked = this.#highlightHwnd
+    const owner = this.#highlightClient
+    this.#highlightHwnd = 0
+    this.#highlightClient = null
+    const targets = owner && owner !== this.#engine ? [owner, this.#engine] : [this.#engine]
+    let failure = null
+    for (const target of targets) {
+      try {
+        await target.call('border.hide', marked ? { hwnd: marked } : {}, { timeoutMs: 5000 })
+        return
+      } catch (err) {
+        failure = err
+      }
+    }
+    if (failure) this.#logger.warn('window highlight unavailable:', failure.message)
   }
 
   /**
@@ -1334,7 +1356,7 @@ export class ComputerUse {
       info = activation.window || match
       const boundHwnd = info.hwnd ?? match.hwnd
       const input = await this.#classifyWindow(boundHwnd, bindClient)
-      await this.#syncWindowHighlight(boundHwnd)
+      await this.#syncWindowHighlight(boundHwnd, bindClient)
       this.#bound = { hwnd: boundHwnd, info, input }
       this.#bindingLost = false
       this.#lastBindingRelease = null

@@ -44,6 +44,8 @@ function Send-Event([string]$name, $payload) {
 
 try {
   [void](Initialize-CuEngine)
+  # A previous engine may have died holding a border mark; restore it before serving.
+  [CuWin.WindowBorder]::Sweep()
 } catch {
   $msg = $_.Exception.Message
   $code = if ($msg -match '^(\w+):') { $Matches[1] } else { 'interop_compile_failed' }
@@ -55,24 +57,30 @@ Send-Event 'ready' (Get-CuEnvInfo)
 
 # --- request loop -----------------------------------------------------------
 
-while ($null -ne ($line = [Console]::In.ReadLine())) {
-  if ([string]::IsNullOrWhiteSpace($line)) { continue }
-  $id = $null
-  try {
-    $req = $line | ConvertFrom-Json
-    $id = [string]$req.id
-    $result = Invoke-CuOp ([string]$req.op) $req.args
-    if ($result.ok) {
-      Send-Ok $id $result.result
-      if ($result.result -is [System.Collections.IDictionary] -and $result.result.Contains('exit')) { exit 0 }
-    } else {
-      Send-Err $id $result.code $result.message
+try {
+  while ($null -ne ($line = [Console]::In.ReadLine())) {
+    if ([string]::IsNullOrWhiteSpace($line)) { continue }
+    $id = $null
+    try {
+      $req = $line | ConvertFrom-Json
+      $id = [string]$req.id
+      $result = Invoke-CuOp ([string]$req.op) $req.args
+      if ($result.ok) {
+        Send-Ok $id $result.result
+        if ($result.result -is [System.Collections.IDictionary] -and $result.result.Contains('exit')) { exit 0 }
+      } else {
+        Send-Err $id $result.code $result.message
+      }
+    } catch {
+      Send-Err $id 'engine_exception' $_.Exception.Message
     }
-  } catch {
-    Send-Err $id 'engine_exception' $_.Exception.Message
   }
 }
+finally {
+  # The client exited or was killed: never leave a button, modifier or border behind. A broken
+  # pipe throws here instead of returning null, so this cleanup cannot live after the loop.
+  try { [void][CuWin.Engine]::ForceIdle() } catch { }
+  try { [CuWin.WindowBorder]::Hide() } catch { }
+}
 
-# stdin closed (client exited or was killed): never leave a button or modifier held down.
-try { [void][CuWin.Engine]::ForceIdle() } catch { }
 exit 0

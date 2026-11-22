@@ -11,6 +11,8 @@ try {
   Add-Type -ReferencedAssemblies System.Drawing.dll -Path (Join-Path $PSScriptRoot 'Interop.cs')
   [void][CuWin.Engine]::EnablePerMonitorV2()
   [void][CuWin.Engine]::ForceIdle()
+  # A killed engine cannot clear its own bound-window border; restore it from the record it left.
+  [CuWin.WindowBorder]::Sweep()
 } catch {
   # Nothing sensible to do here; the caller is already handling a failure.
 }

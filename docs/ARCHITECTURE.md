@@ -193,15 +193,15 @@
 
 ## 8.4 绑定窗口描边
 
-`Interop.cs` 的 `Overlay`：引擎内一条独立 STA 线程 + 消息泵，创建一个 `WS_POPUP` 窗口：
+`Interop.cs` 的 `WindowBorder`：不创建任何窗口，直接改目标窗口的 DWM 边框颜色。
 
-- 扩展样式 `TOPMOST | TOOLWINDOW | TRANSPARENT | LAYERED | NOACTIVATE`，`WM_NCHITTEST` 返回 `HTTRANSPARENT`，所以既不挡鼠标也不抢焦点、不进 Alt+Tab；
-- 用 `DwmGetWindowAttribute(EXTENDED_FRAME_BOUNDS)` 取**可见边框**，向外扩 3px 作为窗口矩形；
-- 用 `CreateRectRgn` + `CombineRgn(RGN_DIFF)` 把窗口区域设成"回字形"，`WM_PAINT` 里一次 `FillRect` 就画出描边——不需要逐像素 alpha；
-- `WM_TIMER`（150ms）跟随目标窗口移动/缩放；目标消失或最小化时自行隐藏；
-- 所有窗口调用都发生在该线程（通过 `PostMessage` 投递），跨线程只读写 `volatile long _target`。
+- `DwmSetWindowAttribute(hwnd, DWMWA_BORDER_COLOR=34, COLORREF)` 把系统边框染成绿色（`0x0046C02E`）；解除绑定时写回 `DWMWA_COLOR_DEFAULT`（`0xFFFFFFFF`）。这个属性只写不读，所以恢复的是**系统默认边框**，应用自己设过的颜色或 `DWMWA_COLOR_NONE` 不会还原；
+- 绘制由桌面合成器完成：窗口移动/缩放/重绘零延迟跟随，没有定时器、没有额外窗口、不占窗口外侧空间，也不影响鼠标与焦点；
+- 需要 Windows 11（build 22000+）；旧系统 `Supported=false`，只记录原因、不发调用，描边不可用但其余功能照常；
+- 窗口已销毁时跳过恢复（`IsWindow` 为假），避免对失效句柄发 DWM 调用；
+- `Show`/`Hide` 全程持同一把锁：状态变更与 DWM 调用不会交错，不会出现"窗口已染绿但 `_target` 已清空"的孤儿标记。
 
-JS 侧只在三个点调用：`open_application` 绑定成功后 `overlay.show`，`switch_display` 与 `cleanup` 调 `overlay.hide`；失败只记日志，不影响工具结果。
+JS 侧记录被标记的 `hwnd` 和实际作画的引擎（高完整性目标走提权助手，中等完整性引擎碰不到它的 DWM 边框）：`open_application` 绑定成功后调 `border.show`，换绑前、`switch_display` 与 `cleanup` 调 `border.hide` 并带上 `hwnd` —— 引擎进程中途重启时，新引擎也能把上一次的标记清掉。失败只记日志，不影响工具结果。
 
 ## 9. 扩展点
 

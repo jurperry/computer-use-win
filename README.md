@@ -6,7 +6,7 @@ Windows 下的 **Computer Use MCP 服务**：把屏幕当成眼睛、把真实�
 
 - 零运行时依赖：`node src/server.mjs` 直接跑，不需要 `npm install`
 - 原生层常驻：一次 Add-Type 编译，之后每次动作个位数/百毫秒级
-- 真正可验证：159 个单测 + 真实桌面靶场 e2e（点击/中文输入/组合键/拖拽/滚轮/输入通道逐项核对目标应用日志）
+- 真正可验证：166 个单测 + 真实桌面靶场 e2e（点击/中文输入/组合键/拖拽/滚轮/输入通道逐项核对目标应用日志）
 
 > 调研与设计过程见 [`docs/PLAN.md`](docs/PLAN.md)，源码级调研见 [`docs/research/`](docs/research/)。
 
@@ -167,12 +167,12 @@ computer_batch                               ← 可预测的连续动作，一�
 
 ## 4.3 绑定窗口的绿色边框
 
-进入窗口模式（`open_application`）后，服务会在被绑定的窗口**外侧**画一圈 3px 的绿色描边，并用 150ms 的定时器跟随窗口移动、缩放；`switch_display` 回到全屏或 `cleanup()` 时消失。
+进入窗口模式（`open_application`）后，服务把被绑定窗口的**系统边框**染成绿色（DWM `DWMWA_BORDER_COLOR`），`switch_display` 回到全屏或 `cleanup()` 时写回 `DWMWA_COLOR_DEFAULT`（系统默认边框；应用自定义的边框色或 `DWMWA_COLOR_NONE` 不会被保留）。
 
-- **点击穿透**：`WM_NCHITTEST → HTTRANSPARENT`，不会挡住你的鼠标，也不会抢焦点（`WS_EX_NOACTIVATE`）。
-- **不进 Alt+Tab**：`WS_EX_TOOLWINDOW`。
-- **不污染截图**：窗口模式截图走 `PrintWindow`，描边是另一个窗口，不会被拍进去。
-- **窗口最小化时自动隐藏**；窗口关闭后自动消失。
+- **零延迟跟随**：由桌面合成器绘制，窗口移动、缩放、重绘时自动跟手，服务端没有定时器、没有额外窗口。
+- **不占地方、不挡操作**：用的是窗口自己的边框，不会在窗口外侧多出一个矩形，也不影响鼠标与焦点。
+- **不污染截图**：`PrintWindow` 拍的是窗口自己的绘制内容，边框由 DWM 画在窗口外框上，实测不出现在图里；只有回退到"截取窗口矩形"时最外 1px 可能带上边框色。
+- **系统要求**：`DWMWA_BORDER_COLOR` 是 Windows 11（build 22000+）能力；Windows 10 上这一指示不可用，其余功能不受影响。DWM 不绘制的窗口（部分无边框/全屏窗口）同样看不到边框。
 - 策略 `flags.windowHighlight: false` 可关闭。
 
 ## 4.4 绑定窗口的输入通道（框架分类）
@@ -233,7 +233,7 @@ posted 消息通道：把 `WM_MOUSEMOVE` + `WM_LBUTTONDOWN/UP` 发给该点命�
 ## 7. 测试
 
 ```powershell
-npm test                 # 159 个单元测试（坐标/策略/协议/锁/按键/启动安全/提权路由/助手协议/工具面/框架分类/输入通道/中止与剪贴板防护）
+npm test                 # 166 个单元测试（坐标/策略/协议/锁/按键/启动安全/提权路由/助手协议/工具面/框架分类/输入通道/中止与剪贴板防护）
 npm run smoke            # 真实 stdio 握手 + 截图 + 发现类工具
 npm run e2e              # 编译靶场并跑真实输入验证（会短暂弹出测试窗口）
 npm run e2e:channel      # 编译经典 USER32 靶场并验证 message/real 两条通道

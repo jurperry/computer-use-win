@@ -17,6 +17,7 @@ using System.Diagnostics;
 using System.Drawing;
 using System.Drawing.Drawing2D;
 using System.Drawing.Imaging;
+using System.IO;
 using System.Runtime.InteropServices;
 using System.Text;
 using System.Threading;
@@ -120,6 +121,7 @@ namespace CuWin
         [DllImport("user32.dll")] public static extern bool ClientToScreen(IntPtr h, ref POINT p);
         [DllImport("user32.dll")] public static extern bool ScreenToClient(IntPtr h, ref POINT p);
         [DllImport("dwmapi.dll")] public static extern int DwmGetWindowAttribute(IntPtr h, int attr, out RECT r, int size);
+        [DllImport("dwmapi.dll")] public static extern int DwmSetWindowAttribute(IntPtr h, int attr, ref uint val, int size);
         [DllImport("user32.dll")] public static extern bool IsWindowVisible(IntPtr h);
         [DllImport("user32.dll")] public static extern bool IsWindowEnabled(IntPtr h);
         [DllImport("user32.dll")] public static extern bool IsIconic(IntPtr h);
@@ -182,7 +184,7 @@ namespace CuWin
 
         [StructLayout(LayoutKind.Sequential)] public struct MSG { public IntPtr hwnd; public uint message; public IntPtr wParam; public IntPtr lParam; public uint time; public POINT pt; }
 
-        // Overlay frame window.
+        // Window class and message pump primitives.
         public delegate IntPtr WndProcDelegate(IntPtr hwnd, uint msg, IntPtr wParam, IntPtr lParam);
         [StructLayout(LayoutKind.Sequential, CharSet = CharSet.Unicode)] public struct WNDCLASS
         {
@@ -405,208 +407,163 @@ namespace CuWin
     }
 
     /// <summary>
-    /// A click-through topmost frame drawn just outside the bound window, so a human can see which
-    /// window the agent is driving. It lives on its own STA thread with a message pump; every Win32
-    /// call for the window happens on that thread. The frame is a hollow region filled with green,
-    /// WS_EX_NOACTIVATE so it never steals focus, and WS_EX_TOOLWINDOW so it stays out of Alt+Tab.
+    /// Marks the window the agent is bound to with the DWM border colour, so a human can see which
+    /// window is being driven. The compositor draws it: it follows moves, resizes and repaints with
+    /// no timer of ours, creates no window of our own and takes no space outside the target.
+    /// Windows 11 (build 22000+) only; older systems simply go without the cue.
     /// </summary>
-    public static class Overlay
+    public static class WindowBorder
     {
-        const int BORDER = 3;
-        const uint TIMER_ID = 1;
-        const string CLASS_NAME = "CuWinOverlayFrame";
-        const int WM_APP_SHOW = 0x8000 + 1;
-        const int WM_APP_HIDE = 0x8000 + 2;
-        const int WM_PAINT = 0x000F;
-        const int WM_TIMER = 0x0113;
-        const int WM_NCHITTEST = 0x0084;
-        const int WM_ERASEBKGND = 0x0014;
-        const int HTTRANSPARENT = -1;
-        const int RGN_DIFF = 4;
-        const int COLOR_GREEN = 0x0046C02E; // COLORREF: R=0x2E G=0xC0 B=0x46
-        const uint SWP_NOSIZE = 0x0001, SWP_NOMOVE = 0x0002, SWP_NOACTIVATE = 0x0010, SWP_SHOWWINDOW = 0x0040, SWP_NOOWNERZORDER = 0x0200;
-        static readonly IntPtr HWND_TOPMOST = new IntPtr(-1);
+        const int DWMWA_BORDER_COLOR = 34;
+        const uint COLOR_DEFAULT = 0xFFFFFFFF; // DWMWA_COLOR_DEFAULT: the system default border
+        const uint COLOR_MARK = 0x0046C02E;    // COLORREF 0x00BBGGRR: R=0x2E G=0xC0 B=0x46 (green)
+        static readonly bool Supported = Environment.OSVersion.Version.Build >= 22000;
 
-        static Thread _thread;
-        static IntPtr _hwnd = IntPtr.Zero;
-        static Native.WndProcDelegate _proc;
-        static IntPtr _brush = IntPtr.Zero;
-        static volatile bool _shown;
-        static long _target;
-        static volatile string _error;
         static readonly object _lock = new object();
+        static long _target;
+        static string _error;
 
-        public static bool Visible { get { return _shown; } }
-        public static string Error { get { return _error; } }
-        public static long Target { get { return _target; } }
+        /// <summary>
+        /// Where the pending mark is recorded. A crash kills the engine without running its cleanup,
+        /// so the next engine replays this record through <see cref="Sweep"/>.
+        /// </summary>
+        static readonly string StateFile = Path.Combine(
+            Environment.GetEnvironmentVariable("CU_STATE_DIR")
+                ?? Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.UserProfile), ".computer-use-win"),
+            "border.txt");
 
-        /// <summary>Current frame rectangle in physical pixels, or null when hidden.</summary>
+        public static bool Visible
+        {
+            get { lock (_lock) return _target != 0 && Native.IsWindow(new IntPtr(_target)); }
+        }
+
+        public static string Error { get { lock (_lock) return _error; } }
+
+        /// <summary>The marked window rectangle in physical pixels, or null when nothing is marked.</summary>
         public static int[] Rect
         {
             get
             {
-                if (!_shown || _target == 0) return null;
-                RECT frame;
-                if (!FrameRect(new IntPtr(_target), out frame)) return null;
-                return new[] { frame.Left - BORDER, frame.Top - BORDER, frame.Right + BORDER, frame.Bottom + BORDER };
+                lock (_lock)
+                {
+                    if (_target == 0) return null;
+                    RECT rect;
+                    if (!Native.GetWindowRect(new IntPtr(_target), out rect)) return null;
+                    if (rect.Right <= rect.Left || rect.Bottom <= rect.Top) return null;
+                    return new[] { rect.Left, rect.Top, rect.Right, rect.Bottom };
+                }
             }
         }
 
-        /// <summary>Starts following a window. Returns null on success, or the reason it could not.</summary>
+        /// <summary>Marks a window. Returns null on success, or why the window could not be marked.</summary>
         public static string Show(long hwnd)
         {
-            if (hwnd == 0 || !Native.IsWindow(new IntPtr(hwnd))) return "the target window does not exist";
             lock (_lock)
             {
+                var window = new IntPtr(hwnd);
+                if (hwnd == 0 || !Native.IsWindow(window)) return "the target window does not exist";
+                if (!Supported)
+                {
+                    _target = 0;
+                    _error = "the DWM border colour needs Windows 11 (build 22000+).";
+                    ClearState();
+                    return null; // the cue is decoration, not a capability: older systems go without it
+                }
+                long previous = _target;
                 _target = hwnd;
-                Start();
-                if (_hwnd == IntPtr.Zero) return _error ?? "the overlay window could not be created";
+                _error = null;
+                if (previous != 0 && previous != hwnd) Paint(new IntPtr(previous), COLOR_DEFAULT);
+                int hr = Paint(window, COLOR_MARK);
+                if (hr == 0)
+                {
+                    WriteState(hwnd);
+                    return null;
+                }
+                _error = "DwmSetWindowAttribute(DWMWA_BORDER_COLOR) failed with 0x" + hr.ToString("X8") + ".";
+                _target = 0;
+                ClearState();
+                return _error;
             }
-            if (Native.IsIconic(new IntPtr(hwnd))) return null; // a minimized window cannot be framed
-            Native.PostMessageW(_hwnd, WM_APP_SHOW, IntPtr.Zero, IntPtr.Zero);
-            // The window is owned by the overlay thread; wait briefly so the reply reports the
-            // state that actually happened instead of "not visible yet".
-            for (int i = 0; i < 30 && !_shown; i++) Thread.Sleep(10);
-            return _shown ? null : (_error ?? "the frame did not become visible");
         }
 
-        public static void Hide()
+        /// <summary>Clears the mark this process owns.</summary>
+        public static void Hide() { Hide(0); }
+
+        /// <summary>
+        /// Clears the mark. A non-zero handle is restored even when this process never marked it, so a
+        /// restarted engine can still undo a border its predecessor left behind.
+        /// </summary>
+        public static void Hide(long hwnd)
         {
-            lock (_lock) { _target = 0; }
-            if (_hwnd != IntPtr.Zero) Native.PostMessageW(_hwnd, WM_APP_HIDE, IntPtr.Zero, IntPtr.Zero);
+            lock (_lock)
+            {
+                long target = _target;
+                _target = 0;
+                _error = null;
+                if (target != 0) Paint(new IntPtr(target), COLOR_DEFAULT);
+                if (hwnd != 0 && hwnd != target) Paint(new IntPtr(hwnd), COLOR_DEFAULT);
+                ClearState();
+            }
         }
 
-        static void Start()
+        /// <summary>
+        /// Restores a border recorded by a previous engine that died before clearing it. Runs at
+        /// engine boot, after the process that owned the mark is gone.
+        /// </summary>
+        public static void Sweep()
         {
-            if (_thread != null) return;
-            _thread = new Thread(Loop);
-            _thread.IsBackground = true;
-            _thread.Name = "cu-overlay";
-            try { _thread.SetApartmentState(ApartmentState.STA); } catch { }
-            _thread.Start();
-            for (int i = 0; i < 100 && _hwnd == IntPtr.Zero && _error == null; i++) Thread.Sleep(10);
+            lock (_lock)
+            {
+                long hwnd = 0;
+                uint pid = 0;
+                try
+                {
+                    if (!File.Exists(StateFile)) return;
+                    foreach (string line in File.ReadAllLines(StateFile))
+                    {
+                        int split = line.IndexOf('=');
+                        if (split <= 0) continue;
+                        string key = line.Substring(0, split);
+                        string value = line.Substring(split + 1);
+                        if (key == "hwnd") long.TryParse(value, out hwnd);
+                        else if (key == "pid") uint.TryParse(value, out pid);
+                    }
+                }
+                catch { return; }
+                finally
+                {
+                    ClearState();
+                }
+                if (hwnd == 0 || !Native.IsWindow(new IntPtr(hwnd))) return;
+                uint owner;
+                Native.GetWindowThreadProcessId(new IntPtr(hwnd), out owner);
+                if (pid != 0 && owner != pid) return; // the handle belongs to another process now
+                Paint(new IntPtr(hwnd), COLOR_DEFAULT);
+            }
         }
 
-        static void Loop()
+        static void WriteState(long hwnd)
         {
             try
             {
-                _proc = WndProc;
-                IntPtr instance = Native.GetModuleHandleW(null);
-                var wc = new Native.WNDCLASS
-                {
-                    style = 0,
-                    lpfnWndProc = Marshal.GetFunctionPointerForDelegate(_proc),
-                    cbClsExtra = 0,
-                    cbWndExtra = 0,
-                    hInstance = instance,
-                    hIcon = IntPtr.Zero,
-                    hCursor = IntPtr.Zero,
-                    hbrBackground = IntPtr.Zero,
-                    lpszMenuName = null,
-                    lpszClassName = CLASS_NAME,
-                };
-                Native.RegisterClassW(ref wc); // already registered is fine
-                // WS_POPUP; WS_EX_TOPMOST|TOOLWINDOW|TRANSPARENT|LAYERED|NOACTIVATE
-                _hwnd = Native.CreateWindowExW(
-                    0x00000008 | 0x00000080 | 0x00000020 | 0x00080000 | 0x08000000,
-                    CLASS_NAME, "Computer Use frame", unchecked((int)0x80000000),
-                    0, 0, 10, 10, IntPtr.Zero, IntPtr.Zero, instance, IntPtr.Zero);
-                if (_hwnd == IntPtr.Zero)
-                {
-                    _error = "CreateWindowEx failed with error " + Marshal.GetLastWin32Error() + ".";
-                    return;
-                }
-                _brush = Native.CreateSolidBrush(COLOR_GREEN);
-                Native.MSG msg;
-                while (Native.GetMessageW(out msg, IntPtr.Zero, 0, 0) > 0)
-                {
-                    Native.TranslateMessage(ref msg);
-                    Native.DispatchMessageW(ref msg);
-                }
+                uint pid;
+                Native.GetWindowThreadProcessId(new IntPtr(hwnd), out pid);
+                File.WriteAllLines(StateFile, new[] { "hwnd=" + hwnd, "pid=" + pid });
             }
-            catch (Exception error)
-            {
-                _error = error.Message;
-            }
+            catch { } // the mark already worked; a lost record only costs the post-crash cleanup
         }
 
-        static IntPtr WndProc(IntPtr hwnd, uint msg, IntPtr wParam, IntPtr lParam)
+        static void ClearState()
         {
-            switch (msg)
-            {
-                case WM_APP_SHOW:
-                    Native.SetTimer(hwnd, new IntPtr(TIMER_ID), 150, IntPtr.Zero);
-                    Follow(hwnd);
-                    Native.ShowWindow(hwnd, 8 /*SW_SHOWNOACTIVATE*/);
-                    Native.SetWindowPos(hwnd, HWND_TOPMOST, 0, 0, 0, 0,
-                        SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE | SWP_SHOWWINDOW | SWP_NOOWNERZORDER);
-                    _shown = true;
-                    return IntPtr.Zero;
-                case WM_APP_HIDE:
-                    Native.KillTimer(hwnd, new IntPtr(TIMER_ID));
-                    Native.ShowWindow(hwnd, 0 /*SW_HIDE*/);
-                    _shown = false;
-                    return IntPtr.Zero;
-                case WM_TIMER:
-                    Follow(hwnd);
-                    return IntPtr.Zero;
-                case WM_NCHITTEST:
-                    return new IntPtr(HTTRANSPARENT); // never intercept the mouse
-                case WM_ERASEBKGND:
-                    return new IntPtr(1);
-                case WM_PAINT:
-                    {
-                        Native.PAINTSTRUCT ps;
-                        IntPtr hdc = Native.BeginPaint(hwnd, out ps);
-                        try
-                        {
-                            RECT client;
-                            Native.GetClientRect(hwnd, out client);
-                            if (_brush != IntPtr.Zero) Native.FillRect(hdc, ref client, _brush);
-                        }
-                        finally { Native.EndPaint(hwnd, ref ps); }
-                        return IntPtr.Zero;
-                    }
-            }
-            return Native.DefWindowProcW(hwnd, msg, wParam, lParam);
+            try { if (File.Exists(StateFile)) File.Delete(StateFile); } catch { }
         }
 
-        static void Follow(IntPtr hwnd)
+        static int Paint(IntPtr window, uint color)
         {
-            long target = _target;
-            if (target == 0) { Native.ShowWindow(hwnd, 0); _shown = false; return; }
-            var window = new IntPtr(target);
-            RECT frame;
-            if (!Native.IsWindow(window) || Native.IsIconic(window) || !FrameRect(window, out frame))
-            {
-                Native.ShowWindow(hwnd, 0);
-                _shown = false;
-                return;
-            }
-            int x = frame.Left - BORDER, y = frame.Top - BORDER;
-            int w = (frame.Right - frame.Left) + BORDER * 2, h = (frame.Bottom - frame.Top) + BORDER * 2;
-            if (w <= 0 || h <= 0) { Native.ShowWindow(hwnd, 0); _shown = false; return; }
-
-            IntPtr outer = Native.CreateRectRgn(0, 0, w, h);
-            IntPtr inner = Native.CreateRectRgn(BORDER, BORDER, w - BORDER, h - BORDER);
-            Native.CombineRgn(outer, outer, inner, RGN_DIFF);
-            Native.DeleteObject(inner);
-            Native.SetWindowRgn(hwnd, outer, true); // the window owns the region now
-
-            // SWP_NOACTIVATE keeps focus where it is; SWP_NOSIZE is not used because we resize.
-            Native.SetWindowPos(hwnd, HWND_TOPMOST, x, y, w, h, SWP_NOACTIVATE | SWP_SHOWWINDOW | SWP_NOOWNERZORDER);
-            Native.InvalidateRect(hwnd, IntPtr.Zero, false);
-            _shown = true;
-        }
-
-        /// <summary>Visible frame of a window (DWM extended frame bounds when available).</summary>
-        static bool FrameRect(IntPtr hwnd, out RECT rect)
-        {
-            rect = new RECT();
-            if (Native.DwmGetWindowAttribute(hwnd, 9 /*DWMWA_EXTENDED_FRAME_BOUNDS*/, out rect, Marshal.SizeOf(typeof(RECT))) == 0
-                && rect.Right > rect.Left && rect.Bottom > rect.Top) return true;
-            return Native.GetWindowRect(hwnd, out rect) && rect.Right > rect.Left && rect.Bottom > rect.Top;
+            // A window that is already gone needs no restoring, and DWM would only refuse it.
+            if (!Native.IsWindow(window)) return 0;
+            uint value = color;
+            return Native.DwmSetWindowAttribute(window, DWMWA_BORDER_COLOR, ref value, 4);
         }
     }
 

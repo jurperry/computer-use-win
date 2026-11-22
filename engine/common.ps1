@@ -255,19 +255,19 @@ function Invoke-CuOp([string]$op, $a) {
       return New-CuErr 'clipboard_write_failed' 'SetClipboardData failed.'
     }
 
-    'overlay.show' {
-      $err = [CuWin.Overlay]::Show([int64]$a.hwnd)
-      if ($err) { return New-CuErr 'overlay_failed' ("The window frame could not be shown: " + $err) }
-      return New-CuOk ([ordered]@{ visible = [CuWin.Overlay]::Visible; rect = [CuWin.Overlay]::Rect; hwnd = [int64]$a.hwnd })
+    'border.show' {
+      $err = [CuWin.WindowBorder]::Show([int64]$a.hwnd)
+      if ($err) { return New-CuErr 'border_failed' ("The window border could not be marked: " + $err) }
+      return New-CuOk ([ordered]@{ visible = [CuWin.WindowBorder]::Visible; rect = [CuWin.WindowBorder]::Rect; hwnd = [int64]$a.hwnd })
     }
 
-    'overlay.hide' {
-      [CuWin.Overlay]::Hide()
-      return New-CuOk ([ordered]@{ visible = [CuWin.Overlay]::Visible })
+    'border.hide' {
+      [CuWin.WindowBorder]::Hide([int64]$a.hwnd)
+      return New-CuOk ([ordered]@{ visible = [CuWin.WindowBorder]::Visible })
     }
 
-    'overlay.state' {
-      return New-CuOk ([ordered]@{ visible = [CuWin.Overlay]::Visible; rect = [CuWin.Overlay]::Rect; error = [CuWin.Overlay]::Error })
+    'border.state' {
+      return New-CuOk ([ordered]@{ visible = [CuWin.WindowBorder]::Visible; rect = [CuWin.WindowBorder]::Rect; error = [CuWin.WindowBorder]::Error })
     }
 
     'esc.watch' {

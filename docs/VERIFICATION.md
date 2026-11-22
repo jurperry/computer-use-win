@@ -17,10 +17,10 @@
 
 ## 2. 自动化测试
 
-### 2.1 单元测试（159 个，全通过）
+### 2.1 单元测试（166 个，全通过）
 
 ```powershell
-node --test "test/*.test.mjs"        # 159 tests
+node --test "test/*.test.mjs"        # 166 tests
 ```
 
 | 文件 | 覆盖 |
@@ -164,7 +164,7 @@ client disconnected after 13 ops
 | 长文本 | 全部逐字 SendInput | ≥200 字符或含换行走剪贴板快路径（暂存/读回/恢复，失败回退） | e2e：261 字符到达且剪贴板恢复 |
 | 提权管道 ACL | 用户 + Administrators + SYSTEM | **只授予调用者用户 SID** | 协议测试 + **真实 UAC 提权 e2e 复跑通过**（助手日志实测 DACL 仅 `jsr1813\jsr`） |
 | 批次图片预算 | 触发预算的动作同时计入 completed 与 failed | 停止并报 `stoppedEarly`，计数自洽 | 代码审查项（预算需 20MiB 图才能触发，未做 e2e） |
-| **绑定窗口绿色描边**（v5） | 无 | 引擎内独立 STA 线程 + 置顶分层窗口，`DwmGetWindowAttribute` 取可见边框向外扩 3px，`SetWindowRgn` 挖空成回字形，150ms 跟随；`WM_NCHITTEST→HTTRANSPARENT` 点击穿透、`NOACTIVATE` 不抢焦点 | 单测：绑定调 `overlay.show`、`switch_display` 调 `overlay.hide`、flag 关闭时不调；实测：窗口存在且 `visible=True`，切回全屏后 `visible=False` |
+| **绑定窗口绿色描边**（v5） | 无 | 不建窗口：`DwmSetWindowAttribute(hwnd, DWMWA_BORDER_COLOR=34)` 把系统边框染绿（`0x0046C02E`），解绑写回 `DWMWA_COLOR_DEFAULT`；合成器绘制，零延迟跟随、不占窗口外侧空间；Windows 11（22000+）能力，旧系统跳过且不发调用 | 单测：绑定调 `border.show`、`switch_display` 调 `border.hide`、flag 关闭时不调；实测：绑定后对物理屏幕抓屏，窗口边框一圈从 0 变成大量绿色像素，解绑后归零；记事本（WinUI 3）与网易云音乐（CEF）各验一次 |
 | **物理 ESC 中止**（v3） | 无 | 引擎低级键盘钩子 + 计数；`wait`/`type`/`hold_key`/`batch` 在安全点中止；注入 ESC 忽略 | e2e：钩子真实注册，注入 ESC 打断 15s 的 `wait`（`user_aborted`） |`n| **click 档剪贴板防护**（v3） | 无 | 暂存+清空、每个动作前重清、离开/cleanup 恢复、读不到就拒绝 | e2e：OS 剪贴板在点击前为空、`read_clipboard` 返回暂存、`cleanup` 恢复 |
 | 测试靶场 auto-exit | 用局部 `WinForms.Timer`，提权实例上不触发（实测残留 240s+） | 改用 `Threading.Timer` + `BeginInvoke(Close)`，并把解析值写进 `ready` 日志 | 普通实例 5s 自退；**提权实例实测 `exited:true, exitCode:0`**，日志 `auto-exit=30` |
 
@@ -192,14 +192,14 @@ npm run e2e:guards
 
 ### 2.8 绑定窗口描边（实测）
 
-`open_application` 绑定记事本后，用独立进程枚举窗口类 `CuWinOverlayFrame`：
+`open_application` 绑定窗口后，用独立进程对**物理屏幕**抓屏，统计窗口边框一圈内的绿色像素（绑定前 → 绑定后 → 解绑后）：
 
 ```
-overlay window: visible=True rect=(282,178)-(1440,865) size=1158x687 pid=<engine>
-notepad:        window rect (419,270) size 1745x1031
+记事本 (WinUI 3)，顶边上沿 8px 带：        0 → 3462   → 0
+网易云音乐 (CEF)，窗口四周 6px 环带：      0 → 12156  → 0
 ```
 
-探测进程是 DPI-unaware，读数被虚拟化（×1.5）：282×1.5≈423、178×1.5≈267、1158×1.5≈1737 —— 与记事本窗口的物理边框吻合（差值来自 DWM 可见边框不含阴影）。`switch_display` 之后同一窗口变成 `visible=False`，描边消失。
+判定标准是"边框上真的出现 RGB(46,192,70)（即 `COLORREF 0x46C02E`）的像素"，而不是 `visible=True` 之类的状态位——v0.2.x 的自建分层窗口实现正是栽在这里：窗口存在、`IsWindowVisible` 为真、几何也对，却因为没设 `SetLayeredWindowAttributes` 而完全透明。现在改成 DWM 边框后没有自己的窗口；`border.state` 的 `error` 在 Windows 10（属性不支持）或 DWM 拒绝时都有内容，正常时为空。
 
 ## 3. 手工验证过的关键问题
 
@@ -287,7 +287,7 @@ notepad:        window rect (419,270) size 1745x1031
 ```powershell
 cd E:\ClaudeCode\computer_use_win
 node src/server.mjs --check          # 环境自检
-node --test "test/*.test.mjs"        # 159 单测
+node --test "test/*.test.mjs"        # 166 单测
 node tools/mcp-smoke.mjs             # MCP 冒烟
 powershell -NoProfile -ExecutionPolicy Bypass -File tools/test-target/build.ps1
 node tools/e2e-input.mjs             # 真实输入 e2e（会短暂弹出测试窗口）

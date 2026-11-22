@@ -54,7 +54,7 @@
 - `elevation`：`{enabled, selfIntegrity, selfIntegrityName, channelAvailable, helper:{pid,integrity,connected}|null}`。`selfIntegrity` 是**服务自身完整性级别**；`helper.connected=true` 表示提权助手已就绪，后续高完整性操作不会再弹 UAC。
 - `mode`：`window-bound` / `full-display` / `target-changing` / `binding-lost`。
 - `captureMode`：当前可用的截图模式，值为 `bound_window`、`full_display` 或 `null`（目标切换中或绑定已失效）。
-- `highlight`：`{enabled, bound}`——`bound:true` 表示窗口模式下外侧的绿色描边应当可见。
+- `highlight`：`{enabled, bound}`——`bound:true` 表示窗口模式下应该看得到绿色边框（窗口自身的 DWM 边框，Windows 11+；见 ARCHITECTURE §8.4）。
 - `abortHotkey`：`{enabled, watching, hint}`。`watching=false` 表示物理 ESC 中止不可用（钩子没装上），此时只能终止进程。
 - `clipboardGuard`：`{enabled, stashed, note}`。`stashed=true` 表示真实剪贴板当前被清空、原内容暂存在内存里（因为目标或前台是 click 档应用）。
 - `anchor`：`{target, image, source, ageMs}|null`。
