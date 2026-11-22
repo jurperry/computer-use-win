@@ -135,7 +135,7 @@ export function buildTools(caps) {
     {
       name: 'screenshot',
       description:
-        'Capture the current target: the bound application window if one is bound (open_application), otherwise the selected display. Returns a JPEG plus geometry. ' +
+        'Capture the current window or display. Returns a JPEG, geometry, and captureMode. If a window binding is lost, use open_application to rebind or switch_display to select a display explicitly. ' +
         'Click and type coordinates always refer to the most recent screenshot. Take a new screenshot after any action whose effect you need to verify, and before clicking anything new.',
       inputSchema: {
         type: 'object',

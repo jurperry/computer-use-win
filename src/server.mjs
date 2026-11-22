@@ -32,10 +32,11 @@ Two modes:
 
 Rules that avoid the classic failures:
 - Always screenshot after anything that changes the screen, and before clicking something new.
+- If the window binding is lost, call open_application to rebind or switch_display to deliberately enter full-display mode, then take a new screenshot.
 - A success message means input was dispatched, NOT that the application did what you wanted. Verify visually.
 - If a click or key returns an error, read it: it usually names the reason (policy tier, missing screenshot, moved window, background focus, framework that ignores posted messages) and the recovery.
 - Do not retry an action with unknown side effects. Take a screenshot first.
-- Call list_granted_applications with include_desktop: true when something behaves unexpectedly: it reports monitors, integrity, the elevation helper, anchor age and limits.
+- Call list_granted_applications with include_desktop: true for the current capture mode, the last screenshot, binding release details, monitors, integrity, the elevation helper, anchor age and limits.
 - Prefer computer_batch for predictable sequences to save round trips.`
 
 function parseArgs(argv) {

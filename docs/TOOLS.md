@@ -52,11 +52,14 @@
 - `session`：PID、是否交互式、窗口站、PowerShell 版本、OS。
 - `monitors`：物理尺寸/DPI/主屏。
 - `elevation`：`{enabled, selfIntegrity, selfIntegrityName, channelAvailable, helper:{pid,integrity,connected}|null}`。`selfIntegrity` 是**服务自身完整性级别**；`helper.connected=true` 表示提权助手已就绪，后续高完整性操作不会再弹 UAC。
-- `mode`：`window-bound` / `full-display`。
+- `mode`：`window-bound` / `full-display` / `target-changing` / `binding-lost`。
+- `captureMode`：当前可用的截图模式，值为 `bound_window`、`full_display` 或 `null`（目标切换中或绑定已失效）。
 - `highlight`：`{enabled, bound}`——`bound:true` 表示窗口模式下外侧的绿色描边应当可见。
 - `abortHotkey`：`{enabled, watching, hint}`。`watching=false` 表示物理 ESC 中止不可用（钩子没装上），此时只能终止进程。
 - `clipboardGuard`：`{enabled, stashed, note}`。`stashed=true` 表示真实剪贴板当前被清空、原内容暂存在内存里（因为目标或前台是 click 档应用）。
 - `anchor`：`{target, image, source, ageMs}|null`。
+- `lastScreenshot`：最近一次成功捕获的 `{captureMode, revision, ageMs}`。清除坐标锚点后仍可查询。
+- `lastBindingRelease`：最近一次解绑的原因、时间和原窗口身份。重新绑定成功后清空。
 - `limits` / `stats`：本会话限额与动作计数。
 
 排查问题的第一站就是它——不再有单独的 `desktop_info`。
@@ -75,6 +78,7 @@
 
 ```json
 {
+  "captureMode": "full_display",
   "image": { "width": 1389, "height": 868 },
   "source": { "width": 2560, "height": 1600, "originX": 0, "originY": 0, "coordinateSpace": "virtual desktop" },
   "capture": { "method": "screen", "normalizedDpiUnaware": false, "notes": [] },
@@ -85,13 +89,15 @@
 }
 ```
 
-绑定窗口时 `window` 为 `{hwnd,title,className,exe,dpiAwareness,rect}`，`monitor` 为 `null`，`source.coordinateSpace` 为 `window (origin = window top-left)`。
+绑定窗口时 `captureMode` 为 `bound_window`，`window` 为 `{hwnd,title,className,exe,dpiAwareness,rect}`，`monitor` 为 `null`，`source.coordinateSpace` 为 `window (origin = window top-left)`。
 
 行为要点：
 
 - 目标窗口最小化时先尝试恢复再截图。
 - 窗口捕获优先 `PrintWindow`（抗遮挡），整屏捕获恒为 `CopyFromScreen`（`capture.method` 分别是 `printwindow` / `screen`）。
-- 返回黑图且窗口被遮挡时报 `capture_failed`，**绝不**回退成整屏图再按窗口坐标点击。
+- 如果 `PrintWindow` 失败或返回空白，窗口无遮挡时允许截取窗口所在的矩形区域，此时 `capture.method` 为 `screen`，`captureMode` 仍为 `bound_window`。窗口被遮挡时报 `capture_failed`。
+- 窗口关闭、句柄被另一进程复用，或替换旧绑定失败时，后续截图报 `window_binding_lost` 并返回解绑原因。用 `open_application` 重新绑定，或用 `switch_display` 显式启用整屏截图。解绑后的整屏截图附带 `bindingRelease` 和坐标提示。
+- 目标切换期间发起的截图，以及切换后才完成的旧截图，返回 `state_conflict`。等切换完成后重新截图。
 - DPI-unaware 且类名属于 `MainWindow` / `WindowsForms10.*` 的窗口，会把左上角逻辑内容拉伸到整张物理画布（与用户所见一致）；其它 DPI-unaware 窗口不猜裁剪，只在 `capture.notes` 里标 `dpi_unaware_not_normalized` 提示坐标可能有缩放偏差。
 - 每次成功截图都会**替换坐标锚点**。
 - 整屏捕获需要 `captureDisplay` flag（默认开）；`unlisted=none` 且没有任何白名单条目时直接 `allowlist_empty`。
@@ -103,7 +109,7 @@
 | `region` | number[4] | ✅ | `[x0,y0,x1,y1]`，相对上一张完整截图 |
 | `save_to_disk` | boolean | | 同时落盘 |
 
-返回 `{zoom:{image,region}, source:{x,y,width,height}, hint}` + image。**只读**：后续点击仍用完整截图的坐标，zoom 不更新锚点。
+返回 `{captureMode, zoom:{image,region}, source:{x,y,width,height}, hint}` + image。**只读**：后续点击仍用完整截图的坐标，zoom 不更新锚点。
 
 ---
 

@@ -98,7 +98,8 @@ class FakeEngine {
           source: { width: size.width, height: size.height, originX: origin.x, originY: origin.y },
           scale: 1,
           normalized: false,
-          captureMethod: 'printwindow',
+          captureMethod: hwnd ? 'printwindow' : 'screen',
+          captureMode: hwnd ? 'bound_window' : 'full_display',
           revision: 1,
           notes: [],
         }
@@ -211,7 +212,7 @@ class FakeElevated {
         mimeType: 'image/jpeg',
         image: { width: args.maxWidth || 800, height: args.maxHeight || 600 },
         source: { width: 800, height: 600, originX: 100, originY: 100 },
-        scale: 1, normalized: false, captureMethod: 'printwindow', revision: 7, notes: [],
+        scale: 1, normalized: false, captureMethod: 'printwindow', captureMode: 'bound_window', revision: 7, notes: [],
       }
     }
     if (op.startsWith('input.')) {
@@ -235,6 +236,22 @@ function makeCu({ policy, engine, elevated } = {}) {
     flags: { clipboardRead: true, clipboardWrite: true, launchApps: true, backgroundInput: false, systemKeyCombos: false },
   })
   return { cu: new ComputerUse({ engine: eng, elevated: elev, policy: pol }), engine: eng, elevated: elev, policy: pol }
+}
+
+function pauseEngineCall(engine, operation) {
+  const call = engine.call.bind(engine)
+  let started
+  let resume
+  const entered = new Promise((resolve) => { started = resolve })
+  const paused = new Promise((resolve) => { resume = resolve })
+  engine.call = async (op, args) => {
+    if (op === operation) {
+      started()
+      await paused
+    }
+    return await call(op, args)
+  }
+  return { entered, resume }
 }
 
 async function bind(cu) {
@@ -468,6 +485,151 @@ test('screenshot refuses a recycled handle instead of reading the new owner', as
   await assert.rejects(() => cu.screenshot({}), (e) => e.code === 'target_identity_changed')
   assert.equal(engine.calls.filter((c) => c.op === 'capture').length, 0)
   assert.equal(cu.bound, null)
+  assert.equal(cu.anchor, null)
+
+  await assert.rejects(() => cu.screenshot({}), (e) =>
+    e.code === 'window_binding_lost' && e.details.bindingRelease.reason === 'target_identity_changed')
+  await assert.rejects(() => cu.key({ text: 'a' }), (e) => e.code === 'window_binding_lost')
+  assert.equal(engine.calls.some((c) => c.op === 'capture' || c.op.startsWith('input.')), false)
+  const { desktop } = JSON.parse((await cu.listGrantedApplications({ include_desktop: true })).content[0].text)
+  assert.equal(desktop.mode, 'binding-lost')
+  assert.equal(desktop.captureMode, null)
+  assert.equal(desktop.lastScreenshot.captureMode, 'bound_window')
+  assert.equal(desktop.lastBindingRelease.actualPid, 7777)
+
+  await cu.switchDisplay({ display: 'auto' })
+  const shot = JSON.parse((await cu.screenshot({})).content[0].text)
+  assert.equal(shot.captureMode, 'full_display')
+  assert.equal(shot.bindingRelease.reason, 'target_identity_changed')
+  assert.match(shot.hint, /switch_display selected full-display mode/)
+})
+
+test('a closed window stops later captures until the user selects a target', async () => {
+  const { cu, engine } = makeCu()
+  await bind(cu)
+  const call = engine.call.bind(engine)
+  engine.call = async (op, args) => {
+    if (op === 'capture') {
+      throw Object.assign(new Error('Window handle is no longer valid.'), { code: 'window_not_found' })
+    }
+    return await call(op, args)
+  }
+  await assert.rejects(() => cu.screenshot({}), (e) =>
+    e.code === 'window_not_found' && e.details.bindingRelease.hwnd === TARGET.hwnd)
+  await assert.rejects(() => cu.screenshot({}), (e) =>
+    e.code === 'window_binding_lost' && e.details.bindingRelease.reason === 'window_not_found')
+  assert.equal(cu.anchor, null)
+  assert.equal(cu.bound, null)
+})
+
+test('a rebind in progress or failed cannot expose desktop pixels', async () => {
+  const { cu, engine } = makeCu()
+  await bind(cu)
+  const { entered, resume } = pauseEngineCall(engine, 'window.activate')
+  engine.failing = (op) => op === 'window.activate'
+  engine.calls.length = 0
+  const rebind = assert.rejects(() => cu.openApplication({ app: 'CuTestTarget.exe' }), (e) =>
+    e.code === 'engine_error' && e.details.bindingRelease.reason === 'rebind_failed')
+  await entered
+  try {
+    await assert.rejects(() => cu.screenshot({}), (e) => e.code === 'state_conflict')
+  } finally {
+    resume()
+  }
+  await rebind
+  await assert.rejects(() => cu.screenshot({}), (e) => e.code === 'window_binding_lost')
+  assert.equal(engine.calls.some((c) => c.op === 'capture'), false)
+  assert.equal(cu.anchor, null)
+
+  engine.failing = null
+  await cu.openApplication({ app: 'CuTestTarget.exe' })
+  const shot = JSON.parse((await cu.screenshot({})).content[0].text)
+  assert.equal(shot.captureMode, 'bound_window')
+  assert.equal(shot.bindingRelease, undefined)
+})
+
+test('a late window screenshot cannot restore the anchor after switch_display', async () => {
+  const { cu, engine } = makeCu()
+  await bind(cu)
+  const { entered, resume } = pauseEngineCall(engine, 'capture')
+  const late = assert.rejects(() => cu.screenshot({}), (e) => e.code === 'state_conflict')
+  await entered
+  try {
+    await cu.switchDisplay({ display: 'auto' })
+    const { desktop } = JSON.parse((await cu.listGrantedApplications({ include_desktop: true })).content[0].text)
+    assert.equal(desktop.captureMode, 'full_display')
+    assert.equal(desktop.lastScreenshot.captureMode, 'bound_window')
+    assert.equal(desktop.lastBindingRelease.reason, 'switch_display')
+  } finally {
+    resume()
+  }
+  await late
+  assert.equal(cu.anchor, null)
+})
+
+test('a late full-display screenshot is discarded when a window is bound', async () => {
+  const { cu, engine } = makeCu()
+  const { entered, resume } = pauseEngineCall(engine, 'capture')
+  const late = assert.rejects(() => cu.screenshot({}), (e) => e.code === 'state_conflict')
+  await entered
+  try {
+    await cu.openApplication({ app: 'CuTestTarget.exe' })
+  } finally {
+    resume()
+  }
+  await late
+  assert.equal(cu.anchor, null)
+  const shot = JSON.parse((await cu.screenshot({})).content[0].text)
+  assert.equal(shot.captureMode, 'bound_window')
+})
+
+test('a batch stops if switch_display interrupts its screenshot', async () => {
+  const { cu, engine } = makeCu()
+  await bind(cu)
+  const { entered, resume } = pauseEngineCall(engine, 'capture')
+  const batch = cu.batch({ actions: [{ action: 'screenshot' }, { action: 'key', text: 'a' }] })
+  await entered
+  try {
+    await cu.switchDisplay({ display: 'auto' })
+  } finally {
+    resume()
+  }
+  const result = await batch
+  assert.equal(result.isError, true)
+  assert.equal(result.content.some((item) => item.type === 'image'), false)
+  assert.equal(JSON.parse(result.content[0].text).failed.code, 'state_conflict')
+  assert.equal(engine.calls.some((c) => c.op === 'input.key'), false)
+})
+
+test('a change of process identity during capture discards the image', async () => {
+  const { cu, engine } = makeCu()
+  await bind(cu)
+  const call = engine.call.bind(engine)
+  engine.call = async (op, args) => {
+    const result = await call(op, args)
+    if (op === 'capture') engine.window = { ...engine.window, pid: 7777 }
+    return result
+  }
+  await assert.rejects(() => cu.screenshot({}), (e) => e.code === 'target_identity_changed')
+  assert.equal(cu.anchor, null)
+})
+
+test('the engine capture mode distinguishes a window crop from a full display', async () => {
+  const { cu, engine } = makeCu()
+  await bind(cu)
+  const call = engine.call.bind(engine)
+  let captureMode = 'bound_window'
+  engine.call = async (op, args) => {
+    const result = await call(op, args)
+    return op === 'capture' ? { ...result, captureMethod: 'screen', captureMode } : result
+  }
+  const shot = JSON.parse((await cu.screenshot({})).content[0].text)
+  assert.equal(shot.captureMode, 'bound_window')
+  assert.equal(shot.capture.method, 'screen')
+  const anchor = cu.anchor
+  captureMode = 'full_display'
+  await assert.rejects(() => cu.screenshot({}), (e) => e.code === 'capture_target_mismatch')
+  assert.equal(cu.anchor, anchor)
 })
 
 test('zoom refuses a recycled handle too', async () => {

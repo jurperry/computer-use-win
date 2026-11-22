@@ -120,7 +120,7 @@ function Invoke-CuOp([string]$op, $a) {
         base64 = $r.base64; mimeType = $r.mimeType
         image = [ordered]@{ width = $r.imageWidth; height = $r.imageHeight }
         source = [ordered]@{ width = $r.sourceWidth; height = $r.sourceHeight; originX = $r.originX; originY = $r.originY }
-        scale = $r.scale; normalized = $r.normalized; captureMethod = $r.captureMethod
+        scale = $r.scale; normalized = $r.normalized; captureMethod = $r.captureMethod; captureMode = $r.captureMode
         revision = $r.revision; notes = @($r.notes)
       })
     }

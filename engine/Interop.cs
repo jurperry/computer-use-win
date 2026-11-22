@@ -278,6 +278,7 @@ namespace CuWin
         public int originX, originY;             // virtual-desktop origin of source surface
         public bool normalized;                  // DPI-unaware content stretched to full canvas
         public string captureMethod;             // printwindow | screen
+        public string captureMode;               // bound_window | full_display
         public double scale;                     // source -> image
         public long revision;
         public List<string> notes = new List<string>();
@@ -1240,6 +1241,7 @@ namespace CuWin
             {
                 if (hwnd != 0)
                 {
+                    result.captureMode = "bound_window";
                     var info = Window(hwnd);
                     if (info == null) { result.errorCode = "window_not_found"; result.errorMessage = "Window handle is no longer valid."; return result; }
                     if (info.minimized) { result.errorCode = "window_minimized"; result.errorMessage = "Window is minimized; restore it with window_activate before capturing."; return result; }
@@ -1335,6 +1337,7 @@ namespace CuWin
                 }
                 else
                 {
+                    result.captureMode = "full_display";
                     var monitors = Monitors();
                     if (monitors.Count == 0) { result.errorCode = "no_monitors"; result.errorMessage = "No displays reported by EnumDisplayMonitors."; return result; }
                     MonitorInfo mon = null;

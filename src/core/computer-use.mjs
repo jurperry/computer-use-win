@@ -23,6 +23,7 @@ import { classifyWindowClasses } from './window-classify.mjs'
 
 const DEFAULT_SHOT_DIR = path.join(os.homedir(), '.computer-use-win', 'shots')
 const FOREGROUND_TIMEOUT_MS = 1500
+const REBIND_HINT = 'Call open_application to rebind, or switch_display to explicitly capture a display.'
 
 function sleep(ms) {
   return new Promise((r) => setTimeout(r, ms))
@@ -39,6 +40,11 @@ export class ComputerUse {
   #batchAnchor = null
   #bound = null
   #display = { mode: 'auto', monitorId: 0 }
+  #targetRevision = 0
+  #targetChanging = false
+  #bindingLost = false
+  #lastBindingRelease = null
+  #lastScreenshot = null
   #grants = []
   #shotDir
   #buttonHeld = false
@@ -124,7 +130,7 @@ export class ComputerUse {
   }
 
   #resolveTarget() {
-    if (this.#bound) return { kind: 'window', hwnd: this.#bound.hwnd, info: this.#bound.info }
+    if (this.#bound) return { kind: 'window', hwnd: this.#bound.hwnd }
     const monitors = this.#monitors()
     if (monitors.length === 0) throw new CuError('no_monitors', 'The engine reported no monitors.')
     let monitor = null
@@ -133,16 +139,25 @@ export class ComputerUse {
     return { kind: 'screen', monitorId: monitor.id, monitor }
   }
 
-  async #rawCapture(target, { maxWidth, maxHeight, quality = 80, mode = 'auto' } = {}, client = this.#engine) {
-    const args = {
-      maxWidth: maxWidth ?? 0,
-      maxHeight: maxHeight ?? 0,
-      quality,
-      mode,
+  async #capturePixels(target, options, client, revision) {
+    this.#assertTargetRevision(revision)
+    const boundWindow = target.kind === 'window'
+    if (boundWindow && !target.hwnd) throw await this.#missingBoundWindow()
+    const args = boundWindow ? { ...options, hwnd: target.hwnd } : { ...options, monitor: target.monitorId }
+    let result
+    try {
+      result = await client.call('capture', args, { timeoutMs: 15000 })
+    } catch (err) {
+      this.#assertTargetRevision(revision)
+      if (boundWindow && err.code === 'window_not_found') throw await this.#missingBoundWindow()
+      throw err
     }
-    if (target.kind === 'window') args.hwnd = target.hwnd
-    else args.monitor = target.monitorId
-    return await client.call('capture', args, { timeoutMs: 15000 })
+    this.#assertTargetRevision(revision)
+    const expectedMode = boundWindow ? 'bound_window' : 'full_display'
+    if (result.captureMode !== expectedMode) {
+      throw new CuError('capture_target_mismatch', `Expected ${expectedMode} pixels, but the engine reported ${result.captureMode || 'an unknown capture mode'}. The image was discarded. Take a new screenshot.`)
+    }
+    return result
   }
 
   /**
@@ -150,33 +165,41 @@ export class ComputerUse {
    * @returns {Promise<{result:any, note:any}>}
    */
   async capture({ saveToDisk = false, updateAnchor = true } = {}) {
+    this.#assertTargetReady()
+    const revision = this.#targetRevision
     await this.#ensureEnv()
+    this.#assertTargetRevision(revision)
     this.#assertObservationAllowed()
     const target = this.#resolveTarget()
     if (target.kind === 'screen') requireFlag(this.#policy, 'captureDisplay', 'Capturing a whole display')
     // Capturing a high-integrity window needs the elevated helper (PrintWindow from a medium
     // process is refused); screen captures stay local because the composited desktop is readable.
     let captureClient = this.#engine
+    let source = target.monitor
     if (target.kind === 'window') {
-      const rawInfo = await this.#windowInfo(target.hwnd)
-      if (!rawInfo) throw new CuError('window_not_found', 'The bound window no longer exists. Call open_application or switch_display, then take a new screenshot.')
-      const info = await this.#assertBoundIdentity(rawInfo)
+      let info = await this.#readBoundWindow(revision)
       const selected = await this.#engineFor(info, 'screenshot')
       captureClient = selected.client
       if (info.minimized) {
+        this.#assertTargetRevision(revision)
         await this.#tryActivate(target.hwnd, captureClient)
+        info = await this.#readBoundWindow(revision)
       }
+      target.info = info
+      source = info.rect
     }
-    const { width, height } = await this.#sourceSize(target)
-    const fitted = this.#fit(width, height)
-    let result = await this.#rawCapture(target, { maxWidth: fitted.width, maxHeight: fitted.height }, captureClient)
+    const capture = (width, height) => {
+      const fitted = this.#fit(width, height)
+      return this.#capturePixels(target, { maxWidth: fitted.width, maxHeight: fitted.height }, captureClient, revision)
+    }
+    const { width, height } = source
+    let result = await capture(width, height)
     // If the window geometry changed between measuring and capturing, the image and the recorded
     // source rect disagree; retry once against the fresh geometry.
     if (target.kind === 'window' && (result.source.width !== width || result.source.height !== height)) {
-      const again = await this.#sourceSize(target)
+      const again = (await this.#readBoundWindow(revision)).rect
       if (again.width !== width || again.height !== height) {
-        const refitted = this.#fit(again.width, again.height)
-        result = await this.#rawCapture(target, { maxWidth: refitted.width, maxHeight: refitted.height }, captureClient)
+        result = await capture(again.width, again.height)
         result.notes = [...(result.notes || []), 'target_geometry_changed_during_capture']
       }
     }
@@ -185,12 +208,15 @@ export class ComputerUse {
     // off, so re-capture against the real source size instead.
     if (result.image.width > this.#maxImageEdge || result.image.height > this.#maxImageEdge ||
         tokenCount(result.image.width, result.image.height) > this.#maxImageTokens) {
-      const refit = this.#fit(result.source.width, result.source.height)
-      const recaptured = await this.#rawCapture(target, { maxWidth: refit.width, maxHeight: refit.height }, captureClient)
+      const recaptured = await capture(result.source.width, result.source.height)
       recaptured.notes = [...(recaptured.notes || []), 'recaptured_to_fit_image_budget']
       result = recaptured
     }
+    if (target.kind === 'window') await this.#readBoundWindow(revision)
+    this.#assertTargetRevision(revision)
     const note = this.#buildNote(target, result)
+    const capturedAt = Date.now()
+    this.#lastScreenshot = { captureMode: note.captureMode, revision: result.revision, capturedAt }
     if (updateAnchor) {
       this.#anchor = {
         image: { width: result.image.width, height: result.image.height },
@@ -204,7 +230,7 @@ export class ComputerUse {
           ? { kind: 'window', hwnd: target.hwnd, title: note.window?.title, exe: note.window?.exe }
           : { kind: 'screen', monitorId: target.monitorId, monitorName: target.monitor.deviceName },
         revision: result.revision,
-        capturedAt: Date.now(),
+        capturedAt,
       }
       if (note.capture.normalized) this.#logger.info('captured DPI-unaware window content (normalized)')
     }
@@ -212,18 +238,9 @@ export class ComputerUse {
     return { result, note }
   }
 
-  async #sourceSize(target) {
-    if (target.kind === 'screen') {
-      const m = target.monitor
-      return { width: m.width, height: m.height }
-    }
-    const info = await this.#windowInfo(target.hwnd)
-    if (!info) throw new CuError('window_not_found', 'The bound window no longer exists.')
-    return { width: info.rect.width, height: info.rect.height }
-  }
-
   #buildNote(target, result) {
     const note = {
+      captureMode: result.captureMode,
       image: { width: result.image.width, height: result.image.height },
       source: {
         width: result.source.width,
@@ -241,6 +258,10 @@ export class ComputerUse {
       hint: 'Coordinates for click/scroll/drag/zoom refer to THIS image; the server converts them to physical screen pixels.',
     }
     if (target.kind === 'screen') {
+      if (this.#lastBindingRelease) {
+        note.bindingRelease = this.#lastBindingRelease
+        note.hint = `The window binding was released (${this.#lastBindingRelease.reason}). switch_display selected full-display mode. Use coordinates from this image.`
+      }
       note.monitor = {
         id: target.monitor.id,
         name: target.monitor.deviceName,
@@ -289,11 +310,12 @@ export class ComputerUse {
   }
 
   async zoom({ region, save_to_disk, saveToDisk } = {}) {
+    this.#assertTargetReady()
+    const revision = this.#targetRevision
     await this.#ensureEnv()
+    this.#assertTargetRevision(revision)
     this.#assertObservationAllowed()
-    await this.#checkAnchorFreshness('zoom')
-    const anchor = this.#activeAnchor()
-    if (!anchor) throw new CuError('bad_args', 'Take a screenshot first; zoom needs a reference image.')
+    const anchor = await this.#checkAnchorFreshness('zoom')
     if (!Array.isArray(region) || region.length !== 4 || !region.every(Number.isFinite)) {
       throw new CuError('bad_args', 'region must be [x0, y0, x1, y1] in screenshot pixel coordinates.')
     }
@@ -313,21 +335,23 @@ export class ComputerUse {
     const fitted = this.#fit(w, h)
     let raw
     if (anchor.target.kind === 'window') {
-      const rawInfo = await this.#windowInfo(anchor.target.hwnd)
-      if (!rawInfo) throw new CuError('window_not_found', 'The window captured by the last screenshot no longer exists.')
-      const info = await this.#assertBoundIdentity(rawInfo)
+      this.#assertTargetRevision(revision)
+      const info = this.#bound.info
       const { client: zoomClient } = await this.#engineFor(info, 'zoom')
-      raw = await zoomClient.call('capture', {
-        hwnd: anchor.target.hwnd, maxWidth: fitted.width, maxHeight: fitted.height, quality: 90,
+      raw = await this.#capturePixels(anchor.target, {
+        maxWidth: fitted.width, maxHeight: fitted.height, quality: 90,
         crop: { x: px - anchor.source.originX, y: py - anchor.source.originY, width: w, height: h },
-      }, { timeoutMs: 15000 })
+      }, zoomClient, revision)
+      await this.#readBoundWindow(revision)
     } else {
-      raw = await this.#engine.call('capture', {
-        monitor: -1, maxWidth: fitted.width, maxHeight: fitted.height, quality: 90,
+      raw = await this.#capturePixels({ kind: 'screen', monitorId: -1 }, {
+        maxWidth: fitted.width, maxHeight: fitted.height, quality: 90,
         crop: { x: px, y: py, width: w, height: h },
-      }, { timeoutMs: 15000 })
+      }, this.#engine, revision)
     }
+    this.#assertTargetRevision(revision)
     const note = {
+      captureMode: raw.captureMode,
       zoom: { image: { width: raw.image.width, height: raw.image.height }, region: [x0, y0, x1, y1] },
       source: { x: raw.source.originX, y: raw.source.originY, width: raw.source.width, height: raw.source.height },
       hint: 'This zoomed image is READ ONLY. Keep using coordinates from the full screenshot for clicks.',
@@ -351,6 +375,70 @@ export class ComputerUse {
   }
 
   // ---------------------------------------------------------------- target helpers
+
+  #assertTargetReady() {
+    if (this.#targetChanging) {
+      throw new CuError('state_conflict', 'A capture target change is in progress. Wait for it to finish, then take a new screenshot.')
+    }
+    if (this.#bindingLost) {
+      const release = this.#lastBindingRelease
+      throw new CuError(
+        'window_binding_lost',
+        `The window binding was released (${release.reason}). ${REBIND_HINT}`,
+        { bindingRelease: release },
+      )
+    }
+  }
+
+  #assertTargetRevision(revision) {
+    if (revision !== this.#targetRevision) {
+      throw new CuError('state_conflict', 'The capture target changed during this request. Take a new screenshot of the current target.')
+    }
+  }
+
+  #invalidateTarget() {
+    // Engine calls can resolve after a rebind, even if it reused the same HWND.
+    this.#targetRevision += 1
+    this.#anchor = null
+    this.#batchAnchor = null
+  }
+
+  #beginTargetChange() {
+    if (this.#targetChanging) {
+      throw new CuError('state_conflict', 'A capture target change is already in progress. Wait for it to finish before changing targets.')
+    }
+    this.#targetChanging = true
+    this.#invalidateTarget()
+  }
+
+  #recordBindingRelease(bound, reason, details = {}) {
+    const release = {
+      reason,
+      at: Date.now(),
+      hwnd: bound.hwnd,
+      pid: bound.info?.pid ?? null,
+      title: bound.info?.title ?? null,
+      exe: bound.info?.exePath ?? bound.info?.processName ?? null,
+      ...details,
+    }
+    this.#lastBindingRelease = release
+    return release
+  }
+
+  async #loseBinding(reason, details) {
+    const release = this.#recordBindingRelease(this.#bound, reason, details)
+    this.#bindingLost = true
+    this.#bound = null
+    this.#messageButtonStuck = false
+    this.#invalidateTarget()
+    await this.#syncWindowHighlight(0)
+    return release
+  }
+
+  async #missingBoundWindow() {
+    const release = await this.#loseBinding('window_not_found')
+    return new CuError('window_not_found', `The bound window no longer exists and its binding was released. ${REBIND_HINT}`, { bindingRelease: release })
+  }
 
   async #windowInfo(hwnd) {
     try {
@@ -611,9 +699,12 @@ export class ComputerUse {
    * same process (engine/theme switch) re-runs the framework classification, because that decides
    * the input channel.
    */
-  async #assertBoundIdentity(info) {
+  async #readBoundWindow(revision) {
+    this.#assertTargetRevision(revision)
     const bound = this.#bound
-    if (!bound) return info
+    const info = await this.#windowInfo(bound.hwnd)
+    this.#assertTargetRevision(revision)
+    if (!info) throw await this.#missingBoundWindow()
     const boundPid = bound.info?.pid || bound.info?.root?.pid
     const boundStart = bound.info?.processStartTime
     const livePid = info.pid || info.root?.pid
@@ -623,23 +714,21 @@ export class ComputerUse {
     if (pidChanged || startChanged) {
       const staleHwnd = bound.hwnd
       const staleTitle = bound.info?.title
-      this.#bound = null
-      this.#anchor = null
-      this.#batchAnchor = null
-      this.#messageButtonStuck = false
-      await this.#syncWindowHighlight(0)
+      const details = { hwnd: staleHwnd, expectedPid: boundPid, actualPid: livePid, expectedStartTime: boundStart || null, actualStartTime: liveStart || null }
+      const release = await this.#loseBinding('target_identity_changed', details)
       throw new CuError(
         'target_identity_changed',
         `Window handle ${staleHwnd}${staleTitle ? ` ("${truncate(staleTitle, 60)}")` : ''} now belongs to a different process instance ` +
           `(PID ${livePid}, was ${boundPid})${startChanged && !pidChanged ? ' — the PID was reused by a newer process' : ''}. ` +
-          'The binding, its policy verdict and every stored coordinate are void; nothing was sent. Call open_application for the app you want, then take a new screenshot.',
-        { hwnd: staleHwnd, expectedPid: boundPid, actualPid: livePid, expectedStartTime: boundStart || null, actualStartTime: liveStart || null },
+          `The binding was released and its screenshot coordinates are invalid. ${REBIND_HINT}`,
+        { ...details, bindingRelease: release },
       )
     }
     if (bound.input && bound.input.topClass !== undefined && info.className && info.className !== bound.input.topClass) {
       // Prefer an already-running helper for a high-integrity target: starting one here would pop
       // UAC just to re-read a class tree, which is not worth it.
       bound.input = await this.#classifyWindow(info.hwnd, this.#classificationClient(info))
+      this.#assertTargetRevision(revision)
     }
     bound.info = info
     return info
@@ -647,11 +736,8 @@ export class ComputerUse {
 
   /** The window that would receive an action at this physical point / for keyboard. */
   async #effectiveTarget(point) {
-    if (this.#bound) {
-      const info = await this.#windowInfo(this.#bound.hwnd)
-      if (!info) throw new CuError('window_not_found', 'The bound window disappeared. Call open_application or switch_display, then screenshot again.')
-      return await this.#assertBoundIdentity(info)
-    }
+    this.#assertTargetReady()
+    if (this.#bound) return await this.#readBoundWindow(this.#targetRevision)
     if (point) {
       const hit = await this.#hitTest(point.x, point.y)
       if (!hit) {
@@ -740,6 +826,7 @@ export class ComputerUse {
    * A moved or resized window means every stored coordinate is wrong now.
    */
   async #checkAnchorFreshness(action) {
+    this.#assertTargetReady()
     const anchor = this.#activeAnchor()
     if (!anchor) {
       throw new CuError(
@@ -748,11 +835,9 @@ export class ComputerUse {
       )
     }
     if (anchor.target.kind !== 'window') return anchor
-    const info = await this.#windowInfo(anchor.target.hwnd)
-    if (!info) {
-      this.#anchor = null
-      throw new CuError('window_not_found', 'The window captured by the last screenshot no longer exists. Take a new screenshot.')
-    }
+    const revision = this.#targetRevision
+    const info = await this.#readBoundWindow(revision)
+    this.#assertTargetRevision(revision)
     if (info.rect.x !== anchor.source.originX || info.rect.y !== anchor.source.originY ||
         info.rect.width !== anchor.source.width || info.rect.height !== anchor.source.height) {
       this.#anchor = null
@@ -988,6 +1073,7 @@ export class ComputerUse {
     if (typeof include_desktop !== 'boolean') {
       throw new CuError('bad_args', 'include_desktop must be a boolean.')
     }
+    if (include_desktop) await this.#refreshEnvironment()
     const body = {
       policy: { preset: this.#policy.preset, source: this.#policy.source, unlisted: this.#policy.unlisted },
       apps: this.#policy.apps,
@@ -1000,7 +1086,7 @@ export class ComputerUse {
       input: this.#boundInputReport(),
       hint: 'Pass include_desktop: true for session integrity, monitors, elevation helper state, the screenshot anchor age, limits and statistics.',
     }
-    if (include_desktop) body.desktop = await this.#desktopReport()
+    if (include_desktop) body.desktop = this.#desktopReport()
     return { content: [{ type: 'text', text: JSON.stringify(body) }] }
   }
 
@@ -1008,8 +1094,19 @@ export class ComputerUse {
    * Environment diagnostics. Folded into list_granted_applications because a standalone MCP
    * server needs one discoverable "where am I and what may I do" call, not two overlapping ones.
    */
-  async #desktopReport() {
-    await this.#refreshEnvironment()
+  #desktopReport() {
+    const now = Date.now()
+    const anchor = this.#anchor
+    const shot = this.#lastScreenshot
+    let mode = this.#bound ? 'window-bound' : 'full-display'
+    let captureMode = this.#bound ? 'bound_window' : 'full_display'
+    if (this.#targetChanging) {
+      mode = 'target-changing'
+      captureMode = null
+    } else if (this.#bindingLost) {
+      mode = 'binding-lost'
+      captureMode = null
+    }
     return {
       session: {
         pid: this.#env.pid,
@@ -1028,7 +1125,8 @@ export class ComputerUse {
           ? { pid: this.#elevatedInfo.helperPid, integrity: this.#elevatedInfo.integrityName, connected: Boolean(this.#elevated?.isReady) }
           : null,
       },
-      mode: this.#bound ? 'window-bound' : 'full-display',
+      mode,
+      captureMode,
       highlight: { enabled: Boolean(this.#policy.flags.windowHighlight), bound: Boolean(this.#bound) },
       abortHotkey: {
         enabled: Boolean(this.#policy.flags.abortHotkey),
@@ -1044,7 +1142,9 @@ export class ComputerUse {
           ? 'The real clipboard is empty while a click-tier app is targeted; read_clipboard still returns the original.'
           : 'The clipboard is untouched.',
       },
-      anchor: this.#anchor ? { target: this.#anchor.target, image: this.#anchor.image, source: this.#anchor.source, ageMs: Date.now() - this.#anchor.capturedAt } : null,
+      anchor: anchor ? { target: anchor.target, image: anchor.image, source: anchor.source, ageMs: Math.max(0, now - anchor.capturedAt) } : null,
+      lastScreenshot: shot ? { captureMode: shot.captureMode, revision: shot.revision, ageMs: Math.max(0, now - shot.capturedAt) } : null,
+      lastBindingRelease: this.#lastBindingRelease,
       limits: this.#limits,
       stats: this.stats,
     }
@@ -1220,25 +1320,37 @@ export class ComputerUse {
       }
     }
 
-    // Changing targets invalidates every stored coordinate and the old authorization, so never
-    // carry a held button across; a failed rebind must leave nothing bound.
-    await this.#releaseHeld()
+    const previous = this.#bound
+    this.#beginTargetChange()
     this.#bound = null
     this.#messageButtonStuck = false
-    this.#anchor = null
-    this.#batchAnchor = null
-    await this.#syncWindowHighlight(0)
-    const { client: bindClient } = await this.#engineFor(match, 'open_application')
-    const activation = await this.#tryActivate(match.hwnd, bindClient)
-    const info = activation.window || match
-    const boundHwnd = info.hwnd ?? match.hwnd
-    // Classify before publishing the binding: the framework decides the input channel, and a
-    // half-bound window (handle without classification) must not survive a failure here.
-    const input = await this.#classifyWindow(boundHwnd, bindClient)
-    this.#bound = { hwnd: boundHwnd, info, input }
+    let activation
+    let info
+    try {
+      await this.#releaseHeld()
+      await this.#syncWindowHighlight(0)
+      const { client: bindClient } = await this.#engineFor(match, 'open_application')
+      activation = await this.#tryActivate(match.hwnd, bindClient)
+      info = activation.window || match
+      const boundHwnd = info.hwnd ?? match.hwnd
+      const input = await this.#classifyWindow(boundHwnd, bindClient)
+      await this.#syncWindowHighlight(boundHwnd)
+      this.#bound = { hwnd: boundHwnd, info, input }
+      this.#bindingLost = false
+      this.#lastBindingRelease = null
+    } catch (err) {
+      if (!previous) throw err
+      this.#bindingLost = true
+      const release = this.#recordBindingRelease(previous, 'rebind_failed', { errorCode: err.code ?? null })
+      throw new CuError(
+        err.code || 'engine_error',
+        `${err.message} The previous window binding was released. ${REBIND_HINT}`,
+        { ...err.details, bindingRelease: release },
+      )
+    } finally {
+      this.#targetChanging = false
+    }
     const verdict = resolveTier(this.#policy, info)
-    // Bound mode is a different coordinate space; a frame on screen is the human's cue for it.
-    await this.#syncWindowHighlight(this.#bound.hwnd)
     const body = {
       bound: {
         hwnd: info.hwnd ?? match.hwnd,
@@ -1277,14 +1389,18 @@ export class ComputerUse {
       monitor = monitors.find((m) => m.primary) || monitors[0]
       next = { mode: 'auto', monitorId: monitor.id }
     }
-    // Only mutate session state once the request is known to be valid.
+    this.#beginTargetChange()
+    if (this.#bound) this.#recordBindingRelease(this.#bound, 'switch_display')
     this.#bound = null
     this.#messageButtonStuck = false
-    await this.#syncWindowHighlight(0)
-    await this.#releaseHeld()
-    this.#anchor = null
-    this.#batchAnchor = null
-    this.#display = next
+    try {
+      await this.#syncWindowHighlight(0)
+      await this.#releaseHeld()
+      this.#display = next
+      this.#bindingLost = false
+    } finally {
+      this.#targetChanging = false
+    }
     return {
       content: [{
         type: 'text',
@@ -1803,6 +1919,8 @@ export class ComputerUse {
       return { ...action, action: kind }
     })
 
+    this.#assertTargetReady()
+    const revision = this.#targetRevision
     const anchorAtStart = this.#anchor
     if (!anchorAtStart && prepared.some((a) => a.coordinate || a.start_coordinate)) {
       throw new CuError('no_screenshot', 'This batch uses coordinates but no screenshot has been taken. Call screenshot first.')
@@ -1823,6 +1941,7 @@ export class ComputerUse {
         this.#resolveMouseChannel({ count: 1, modifiers: this.#parseModifiers(action.text), screen, requested: 'message' })
       }
     }
+    this.#assertTargetRevision(revision)
     this.#batchAnchor = anchorAtStart
     const escBase = await this.#escCount()
 
@@ -1851,6 +1970,7 @@ export class ComputerUse {
         ctx?.progress?.(`batch ${i + 1}/${prepared.length}: ${action.action}`)
         let outcome
         try {
+          this.#assertTargetRevision(revision)
           outcome = await this.#dispatchBatchAction(action)
         } catch (err) {
           failure = { action: action.action, index: i, ok: false, output: err.message, code: err.code || 'error' }
@@ -1960,9 +2080,11 @@ export class ComputerUse {
         this.#logger.warn('release_all failed during cleanup:', err.message)
       }
     }
-    this.#anchor = null
-    this.#batchAnchor = null
+    this.#invalidateTarget()
     this.#bound = null
+    this.#bindingLost = false
+    this.#lastBindingRelease = null
+    this.#lastScreenshot = null
     this.#buttonHeld = false
     this.#buttonHeldClient = null
     this.#pendingRelease = false
