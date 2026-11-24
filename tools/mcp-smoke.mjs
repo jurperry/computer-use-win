@@ -101,6 +101,10 @@ try {
   step('tools/list', names.length === 27, `${names.length} tools`)
   step('core tools present', ['screenshot', 'left_click', 'type', 'computer_batch', 'request_access', 'list_granted_applications', 'list_windows', 'zoom'].every((n) => names.includes(n)), names.join(','))
   step('desktop_info folded into list_granted_applications', !names.includes('desktop_info'), 'no separate diagnostics tool')
+  const openApp = listed.tools.find((t) => t.name === 'open_application')
+  // This repo states defaults in the description rather than a JSON Schema `default` keyword.
+  step('open_application advertises its fresh screenshot anchor', /Default true/.test(openApp?.inputSchema?.properties?.screenshot?.description ?? ''),
+    `screenshot arg advertised=${Boolean(openApp?.inputSchema?.properties?.screenshot)}`)
 
   const info = await callTool('list_granted_applications', { include_desktop: true })
   const infoJson = JSON.parse(info.text)
