@@ -105,9 +105,10 @@ Copy-Item examples\policy.standard.json "$dir\policy.json"
 request_access / list_granted_applications   ← 先确认真实环境和策略（include_desktop:true 看环境）
 open_application 或 switch_display           ← 选目标：绑定窗口 or 全屏
 screenshot                                   ← 取锚点，之后所有坐标都相对这张图
+                                             （open_application 默认已带回首图并设好锚点，此步可省）
 left_click / type / key / scroll ...         ← 一次只做可预测的动作
 screenshot                                   ← 验证（成功文案只表示"已派发"）
-computer_batch                               ← 可预测的连续动作，一次往返
+computer_batch                               ← 可预测的连续动作，一次往返；末尾带 screenshot 即同时完成验证与下次锚点
 ```
 
 三条硬规则（写进了 server instructions）：

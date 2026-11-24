@@ -264,10 +264,64 @@ async function bind(cu) {
 
 test('click without a screenshot is refused before any input', async () => {
   const { cu, engine } = makeCu()
-  await cu.openApplication({ app: 'CuTestTarget.exe' })
+  await cu.openApplication({ app: 'CuTestTarget.exe', screenshot: false })
   engine.calls.length = 0
   await assert.rejects(() => cu.leftClick({ coordinate: [10, 10] }), (e) => e.code === 'no_screenshot')
   assert.equal(engine.calls.filter((c) => c.op.startsWith('input.')).length, 0)
+})
+
+test('open_application returns an anchored screenshot by default', async () => {
+  const { cu, engine } = makeCu()
+  const res = await cu.openApplication({ app: 'CuTestTarget.exe' })
+  const body = JSON.parse(res.content[0].text)
+  assert.equal(body.previousAnchorCleared, true)
+  assert.ok(body.screenshot, 'expected the capture note in the reply')
+  assert.ok(res.content.some((c) => c.type === 'image'), 'expected an image content block')
+  assert.equal(cu.anchor.target.kind, 'window')
+  assert.equal(cu.anchor.image.width, body.screenshot.image.width)
+  // The anchor is already live: no second screenshot round trip before the first click.
+  engine.calls.length = 0
+  await cu.leftClick({ coordinate: [10, 10] })
+  assert.ok(engine.calls.some((c) => c.op.startsWith('input.')))
+})
+
+test('open_application without a screenshot leaves the anchor empty', async () => {
+  const { cu } = makeCu()
+  const res = await cu.openApplication({ app: 'CuTestTarget.exe', screenshot: false })
+  const body = JSON.parse(res.content[0].text)
+  assert.equal(body.screenshot, undefined)
+  assert.equal(res.content.some((c) => c.type === 'image'), false)
+  assert.equal(cu.anchor, null)
+})
+
+test('a failed fresh capture never undoes a successful bind', async () => {
+  const engine = new FakeEngine({ failing: (op) => op === 'capture' })
+  const { cu } = makeCu({ engine })
+  const res = await cu.openApplication({ app: 'CuTestTarget.exe' })
+  const body = JSON.parse(res.content[0].text)
+  assert.equal(body.bound.hwnd, 42)
+  assert.match(body.screenshotError, /Call screenshot before clicking/)
+  assert.equal(res.content.some((c) => c.type === 'image'), false)
+  assert.equal(cu.anchor, null)
+})
+
+test('a capture that loses the target fails the bind instead of reporting success', async () => {
+  const engine = new FakeEngine()
+  const { cu } = makeCu({ engine })
+  const call = engine.call.bind(engine)
+  engine.call = async (op, args) => {
+    if (op === 'capture') {
+      const err = new Error('No window with handle 42.')
+      err.code = 'window_not_found'
+      throw err
+    }
+    return await call(op, args)
+  }
+  // The capture has already released the binding, so a "bound, just screenshot again" reply would
+  // send the model into a loop; the target-state error must surface unchanged.
+  await assert.rejects(() => cu.openApplication({ app: 'CuTestTarget.exe' }), (e) => e.code === 'window_not_found')
+  assert.equal(cu.bound, null)
+  assert.equal(cu.anchor, null)
 })
 
 test('a window that moved after the screenshot invalidates the anchor', async () => {
@@ -576,7 +630,8 @@ test('a late full-display screenshot is discarded when a window is bound', async
   const late = assert.rejects(() => cu.screenshot({}), (e) => e.code === 'state_conflict')
   await entered
   try {
-    await cu.openApplication({ app: 'CuTestTarget.exe' })
+    // Skip open_application's own capture: the paused 'capture' op would otherwise deadlock it.
+    await cu.openApplication({ app: 'CuTestTarget.exe', screenshot: false })
   } finally {
     resume()
   }
@@ -823,6 +878,37 @@ test('batch coordinates stay anchored to the pre-batch screenshot even after an 
   assert.equal(body.completed.length, 2)
   assert.deepEqual(engine.window.rect, before)
   assert.equal(cu.anchor.source.width, before.width)
+  assert.equal(body.nextCoordinatesReferTo, undefined)
+})
+
+test('a final batch screenshot becomes the next coordinate anchor', async () => {
+  const { cu } = makeCu()
+  await bind(cu)
+  const before = cu.anchor
+  const res = await cu.batch({
+    actions: [
+      { action: 'left_click', coordinate: [10, 10] },
+      { action: 'screenshot' },
+    ],
+  })
+  const body = JSON.parse(res.content[0].text)
+  assert.equal(body.completed.length, 2)
+  assert.equal(body.nextCoordinatesReferTo, 'the final batch screenshot')
+  assert.match(body.recovery, /final screenshot is now the coordinate anchor/)
+  assert.notEqual(cu.anchor, before)
+  assert.equal(cu.anchor.target.kind, 'window')
+  assert.ok(res.content.some((c) => c.type === 'image'))
+})
+
+test('a batch without a trailing screenshot keeps the previous anchor', async () => {
+  const { cu } = makeCu()
+  await bind(cu)
+  const before = cu.anchor
+  const res = await cu.batch({ actions: [{ action: 'left_click', coordinate: [10, 10] }] })
+  const body = JSON.parse(res.content[0].text)
+  assert.equal(body.nextCoordinatesReferTo, undefined)
+  assert.match(body.recovery, /Take a screenshot to confirm/)
+  assert.equal(cu.anchor, before)
 })
 
 test('zoom does not move the coordinate anchor', async () => {
@@ -961,7 +1047,9 @@ test('binding a restricted window marks its border through the elevated helper',
   const { cu, engine, elevated } = makeCu({ policy: elevationPolicy() })
   markRestricted(engine)
   await cu.openApplication({ app: 'CuTestTarget.exe' })
-  assert.equal(elevated.started, 1)
+  // Bind and the reply's fresh capture each consult #engineFor. The real helper's start() is
+  // idempotent (isReady short-circuits), so the second call costs nothing and never re-prompts UAC.
+  assert.equal(elevated.started, 2)
   assert.ok(
     elevated.calls.some((c) => c.op === 'border.show' && c.args.hwnd === 42),
     'the helper must draw the border it can reach',

@@ -32,12 +32,12 @@ Two modes:
 
 Rules that avoid the classic failures:
 - Always screenshot after anything that changes the screen, and before clicking something new.
-- If the window binding is lost, call open_application to rebind or switch_display to deliberately enter full-display mode, then take a new screenshot.
+- If the window binding is lost, call open_application to rebind (it returns a fresh screenshot), or switch_display and then screenshot for full-display mode.
 - A success message means input was dispatched, NOT that the application did what you wanted. Verify visually.
 - If a click or key returns an error, read it: it usually names the reason (policy tier, missing screenshot, moved window, background focus, framework that ignores posted messages) and the recovery.
 - Do not retry an action with unknown side effects. Take a screenshot first.
 - Call list_granted_applications with include_desktop: true for the current capture mode, the last screenshot, binding release details, monitors, integrity, the elevation helper, anchor age and limits.
-- Prefer computer_batch for predictable sequences to save round trips.`
+- Prefer computer_batch for predictable sequences to save round trips, and end it with a screenshot to get the next coordinate anchor in the same call.`
 
 function parseArgs(argv) {
   const opts = {

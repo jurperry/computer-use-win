@@ -1260,7 +1260,7 @@ export class ComputerUse {
     }
   }
 
-  async openApplication({ app, launch = true } = {}) {
+  async openApplication({ app, launch = true, screenshot = true } = {}) {
     await this.#ensureEnv()
     const needle = String(app || '').trim()
     if (!needle) throw new CuError('bad_args', 'app is required (display name, executable name, or full path).')
@@ -1387,7 +1387,24 @@ export class ComputerUse {
       previousAnchorCleared: true,
       hint: 'Window coordinates now refer to this window. Take a screenshot before clicking: previous image coordinates are invalid.',
     }
-    return { content: [{ type: 'text', text: JSON.stringify(body) }] }
+    const images = []
+    if (screenshot) {
+      // Bind + capture in one call: the model otherwise always spends a second round trip on a
+      // screenshot before it can click. A failed capture never undoes a successful bind.
+      try {
+        const { result, note } = await this.capture()
+        body.screenshot = note
+        body.hint = 'Coordinates for click/scroll/drag refer to the attached image of the bound window (origin = window top-left); no separate screenshot is needed.'
+        images.push({ type: 'image', data: result.base64, mimeType: result.mimeType || 'image/jpeg' })
+      } catch (err) {
+        // Only a pure capture failure keeps the bind: if the target itself went away, capture has
+        // already released the binding, and a concurrent target change invalidates this reply.
+        // Reporting success in those cases would send the model into a rebind/screenshot loop.
+        if (!this.#bound || this.#bindingLost || err?.code === 'state_conflict') throw err
+        body.screenshotError = `${err.message} Call screenshot before clicking.`
+      }
+    }
+    return { content: [{ type: 'text', text: JSON.stringify(body) }, ...images] }
   }
 
   async switchDisplay({ display } = {}) {
@@ -1973,6 +1990,7 @@ export class ComputerUse {
     let failure = null
     let aborted = null
     let budgetReached = null
+    let finalCaptureAnchored = false
     try {
       for (let i = 0; i < prepared.length; i++) {
         if (ctx?.signal?.aborted) {
@@ -1993,12 +2011,13 @@ export class ComputerUse {
         let outcome
         try {
           this.#assertTargetRevision(revision)
-          outcome = await this.#dispatchBatchAction(action)
+          outcome = await this.#dispatchBatchAction(action, i === prepared.length - 1)
         } catch (err) {
           failure = { action: action.action, index: i, ok: false, output: err.message, code: err.code || 'error' }
           break
         }
         completed.push({ action: action.action, ok: true, output: outcome.text })
+        if (action.action === 'screenshot' && i === prepared.length - 1) finalCaptureAnchored = true
         let budgetHit = false
         for (const img of outcome.images || []) {
           const bytes = Math.floor((img.data.length * 3) / 4)
@@ -2032,6 +2051,7 @@ export class ComputerUse {
       ...(budgetReached ? { stoppedEarly: budgetReached } : {}),
       remaining: Math.max(0, prepared.length - completed.length - (failure ? 1 : 0)),
       coordinatesReferTo: 'pre-batch screenshot',
+      ...(finalCaptureAnchored ? { nextCoordinatesReferTo: 'the final batch screenshot' } : {}),
       recovery: aborted
         ? aborted.code === 'user_aborted'
           ? 'The user pressed Escape, so the batch stopped before the action above and nothing was dispatched for it or later actions. Do not retry until the user says to continue.'
@@ -2039,8 +2059,12 @@ export class ComputerUse {
         : failure
           ? 'Do not replay the whole batch. Look at the returned screenshot, keep the completed actions, and retry only the missing ones. If the failed action had side effects, verify the app state first.'
           : budgetReached
-            ? 'The image budget stopped the batch early; the actions above did run. Continue with a smaller batch that needs fewer screenshots.'
-            : 'All actions were dispatched, but the application effect is not verified. Take a screenshot to confirm the result.',
+            ? finalCaptureAnchored
+              ? 'The image budget stopped the batch early; the actions above did run. The final capture updated the coordinate anchor but its image was dropped, so call screenshot before further input.'
+              : 'The image budget stopped the batch early; the actions above did run. Continue with a smaller batch that needs fewer screenshots.'
+            : finalCaptureAnchored
+              ? 'All actions were dispatched. The final screenshot is now the coordinate anchor: use that image to verify the result and for any further input.'
+              : 'All actions were dispatched, but the application effect is not verified. Take a screenshot to confirm the result.',
     }
     const content = [{ type: 'text', text: JSON.stringify(body) }]
     content.push(...images)
@@ -2048,7 +2072,7 @@ export class ComputerUse {
     return { content }
   }
 
-  async #dispatchBatchAction(action) {
+  async #dispatchBatchAction(action, isLast = false) {
     const pack = (result) => ({
       text: result.content[0]?.text ?? '',
       images: result.content.filter((c) => c.type === 'image'),
@@ -2081,8 +2105,10 @@ export class ComputerUse {
         return { text: `Waited ${seconds}s.` }
       }
       case 'screenshot': {
-        // Mid-batch captures are for inspection only: they never move the coordinate anchor.
-        const { result, note } = await this.capture({ updateAnchor: false })
+        // Mid-batch captures never move the coordinate anchor (later actions still address the
+        // pre-batch image). A FINAL capture becomes the next anchor, so the follow-up call can act
+        // on this image directly instead of spending another round trip on a screenshot.
+        const { result, note } = await this.capture({ updateAnchor: isLast })
         return { text: JSON.stringify(note), images: [{ type: 'image', data: result.base64, mimeType: result.mimeType || 'image/jpeg' }] }
       }
       default:

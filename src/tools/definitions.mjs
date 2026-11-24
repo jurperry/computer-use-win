@@ -173,13 +173,18 @@ export function buildTools(caps) {
       name: 'open_application',
       description:
         'Bind an application window and bring it to the front, launching it if it is not running. Must be allowed by the policy. ' +
-        'Binding switches coordinates to window-local space, so always take a screenshot afterwards. If a matching window is already running it is bound as-is and the reply says so. ' +
+        'Binding switches coordinates to window-local space. The reply includes a fresh screenshot of the bound window by default: use its coordinates directly, no separate screenshot is needed. ' +
+        'If a matching window is already running it is bound as-is and the reply says so. ' +
         'The reply classifies the window framework and reports which input channel later clicks will use.',
       inputSchema: {
         type: 'object',
         properties: {
           app: { type: 'string', description: 'Executable name ("notepad.exe"), process name ("notepad"), display/title text, or a full path.' },
           launch: { type: 'boolean', description: 'Launch it when no matching window exists. Default true; requires the launchApps policy flag.' },
+          screenshot: {
+            type: 'boolean',
+            description: 'Capture the bound window and make that image the coordinate anchor. Default true. Pass false to skip the capture, then call screenshot before clicking.',
+          },
         },
         required: ['app'],
       },
@@ -400,7 +405,7 @@ export function buildTools(caps) {
         'Execute several actions in ONE tool call. Each individual tool call costs a model round trip; batching a predictable sequence removes all but one. ' +
         'Actions run sequentially and stop at the first error. Every action is validated before the first side effect. ' +
         `${GATE_DESC} The target check runs before EACH action. ` +
-        'Screenshots inside a batch are for inspection: coordinates for all actions refer to the PRE-BATCH screenshot. ' +
+        'Coordinates for all actions refer to the PRE-BATCH screenshot. End the batch with a screenshot to verify the result: a final screenshot also becomes the coordinate anchor for the next call, so no separate screenshot is needed. Mid-batch screenshots are inspection-only and never move the anchor. ' +
         `Limits: ${MAX_BATCH_ACTIONS} actions, 4 screenshots, 20 MiB of images.`,
       inputSchema: {
         type: 'object',

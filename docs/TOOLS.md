@@ -121,8 +121,9 @@
 |------|------|------|------|
 | `app` | string | ✅ | 可执行名/进程名/标题片段/完整路径 |
 | `launch` | boolean | | 未运行是否启动（默认 true，需要 `launchApps` flag） |
+| `screenshot` | boolean | | 绑定后立即截图并把该图设为坐标锚点（默认 true）；传 `false` 则跳过，需自行 `screenshot` |
 
-行为：按 exe → 进程名 → 标题的顺序匹配窗口；都没有则启动并等窗口出现（最多 12s）。成功后**绑定**该窗口并清除旧锚点，`launched` 表示是否新启，`activated` 表示是否真的拿到前台。
+行为：按 exe → 进程名 → 标题的顺序匹配窗口；都没有则启动并等窗口出现（最多 12s）。成功后**绑定**该窗口并清除旧锚点，`launched` 表示是否新启，`activated` 表示是否真的拿到前台。默认随回复返回绑定窗口的新截图（`screenshot` 字段为捕获说明，图片作为 image content），其坐标可直接用于后续点击；截图失败不影响绑定本身，此时以 `screenshotError` 说明并需补一次 `screenshot`；但若失败原因是目标已失效（`window_not_found` / `target_identity_changed` / 代际 `state_conflict`），绑定此时已被释放，整个调用按原错误码失败并附重绑提示，不会伪装成"绑定成功"。
 
 ```json
 {
@@ -140,7 +141,8 @@
   "launched": false,
   "activated": true,
   "previousAnchorCleared": true,
-  "hint": "Window coordinates now refer to this window. Take a screenshot before clicking: previous image coordinates are invalid."
+  "screenshot": { "captureMode": "bound_window", "image": {"width":902,"height":656}, "revision": 3 },
+  "hint": "Coordinates for click/scroll/drag refer to the attached image of the bound window (origin = window top-left); no separate screenshot is needed."
 }
 ```
 
@@ -290,7 +292,7 @@ message 通道的语义：**不移动真实光标、不改前台**，窗口被�
 - 全部动作在**第一个副作用之前**完成校验；任一非法则整批拒绝。
 - 顺序执行，首个失败即停；动作间 10ms 间隔。
 - 最多 4 张截图、累计图片 ≤20 MiB。
-- 批次内的截图**只用于观察**，不会改变坐标锚点：所有动作坐标都相对**批前截图**。
+- 批次内的截图**只用于观察**，不会改变坐标锚点：所有动作坐标都相对**批前截图**。**例外**：作为最后一个动作的截图会成为下一次调用的坐标锚点（返回体带 `nextCoordinatesReferTo`），因此把 `screenshot` 放在批次末尾即可在同一次调用里完成"验证结果 + 建立下次基准"，不必再单独截图。若该图因图片预算被丢弃，锚点仍会更新，`recovery` 会提示补截图。
 - 每个动作执行前重新做目标/tier 检查，所以中途跳到别的应用会在此停下。
 
 返回：

@@ -136,6 +136,9 @@ try {
   const openedJson = parse(opened.text)
   record('open_application binds target', opened.ok && openedJson?.bound?.hwnd === info.hwnd,
     opened.ok ? `hwnd=${openedJson?.bound?.hwnd} tier=${openedJson?.bound?.tier}` : opened.text.slice(0, 200))
+  record('open_application returns an anchored first screenshot',
+    opened.ok && openedJson?.screenshot?.captureMode === 'bound_window' && opened.images?.length === 1,
+    opened.ok ? `capture=${openedJson?.screenshot?.capture?.method ?? 'n/a'} images=${opened.images?.length ?? 0}` : '')
 
   // --- screenshot in window mode -------------------------------------------
   const shot = await tool('screenshot')
@@ -272,6 +275,18 @@ try {
   const batchJson = parse(batch.text)
   record('computer_batch runs every action', batch.ok && after - before === 2,
     `clicks ${before}->${after}, completed=${batchJson?.completed?.length}`)
+
+  // --- batch whose final screenshot becomes the next anchor ------------------
+  const anchoredBatch = await tool('computer_batch', {
+    actions: [
+      { action: 'left_click', coordinate: [buttonPt.x, buttonPt.y] },
+      { action: 'screenshot' },
+    ],
+  })
+  const anchoredJson = parse(anchoredBatch.text)
+  record('final batch screenshot becomes the next anchor',
+    anchoredBatch.ok && anchoredJson?.nextCoordinatesReferTo === 'the final batch screenshot' && anchoredBatch.images?.length === 1,
+    `completed=${anchoredJson?.completed?.length} images=${anchoredBatch.images?.length ?? 0}`)
 
   // --- wait ----------------------------------------------------------------
   const waited = await tool('wait', { duration: 0.15 })
